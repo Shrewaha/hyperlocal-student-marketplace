@@ -1,5 +1,7 @@
 # HyperLocal Student Marketplace
 
+[![tests](https://github.com/Shrewaha/hyperlocal-student-marketplace/actions/workflows/tests.yml/badge.svg)](https://github.com/Shrewaha/hyperlocal-student-marketplace/actions/workflows/tests.yml)
+
 A two-sided marketplace that flips how students buy local. Instead of walking
 shop to shop asking for prices, a student posts **what they need** — specs and
 budget — and nearby shops compete by sending offers. The student gets one
