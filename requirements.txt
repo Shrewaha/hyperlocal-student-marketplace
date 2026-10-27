@@ -1,0 +1,5 @@
+# Backend dependencies. Install with:  pip install -r requirements.txt
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+email-validator>=2.1

@@ -1,0 +1,41 @@
+# --- Secrets ---------------------------------------------------------------
+.env
+*.env
+!.env.example
+
+# --- Database --------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+marketplace.db
+test_marketplace.db
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# --- Java ------------------------------------------------------------------
+*.class
+*.jar
+!frontend/lib/*.jar
+out/
+target/
+bin/
+
+# --- IDEs ------------------------------------------------------------------
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# --- OS --------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
