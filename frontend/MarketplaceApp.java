@@ -47,7 +47,35 @@ public class MarketplaceApp extends Application {
      * Configuration and session state
      * ------------------------------------------------------------------ */
 
-    static final String BASE_URL = "http://localhost:8000";
+    /*
+     * Where the backend lives.
+     *
+     * A downloaded build cannot be recompiled by the person running it, so the
+     * address has to be settable from outside. In order of precedence:
+     *
+     *   java -Dmarketplace.api=https://api.example.com -jar MarketplaceApp.jar
+     *   MARKETPLACE_API=https://api.example.com  (environment variable)
+     *   http://localhost:8000                    (unchanged default)
+     *
+     * Running from the IDE with nothing set behaves exactly as it always did.
+     */
+    static final String BASE_URL = resolveBaseUrl();
+
+    private static String resolveBaseUrl() {
+        String url = System.getProperty("marketplace.api");
+        if (url == null || url.isBlank()) {
+            url = System.getenv("MARKETPLACE_API");
+        }
+        if (url == null || url.isBlank()) {
+            return "http://localhost:8000";
+        }
+        url = url.trim();
+        // A trailing slash would turn every path into a double-slashed URL.
+        while (url.endsWith("/")) {
+            url = url.substring(0, url.length() - 1);
+        }
+        return url;
+    }
 
     static final String[] CATEGORIES = {
             "Electronics", "Stationery", "Lab Components", "Books",

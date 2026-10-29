@@ -1,6 +1,8 @@
 # HyperLocal Student Marketplace
 
 [![tests](https://github.com/Shrewaha/hyperlocal-student-marketplace/actions/workflows/tests.yml/badge.svg)](https://github.com/Shrewaha/hyperlocal-student-marketplace/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/Shrewaha/hyperlocal-student-marketplace?display_name=tag&sort=semver)](https://github.com/Shrewaha/hyperlocal-student-marketplace/releases/latest)
+[![license](https://img.shields.io/github/license/Shrewaha/hyperlocal-student-marketplace)](LICENSE)
 
 A two-sided marketplace that flips how students buy local. Instead of walking
 shop to shop asking for prices, a student posts **what they need** — specs and
@@ -9,6 +11,43 @@ comparison table with the best price flagged, and an email the moment a new
 offer lands.
 
 Built as a FastAPI JSON backend with a JavaFX desktop client.
+
+---
+
+## Download
+
+Grab the client from the [latest release](https://github.com/Shrewaha/hyperlocal-student-marketplace/releases/latest).
+
+| You have | Take | How to run it |
+|---|---|---|
+| No Java installed | `HyperLocalMarketplace-<version>-<your-platform>.zip` or `.tar.gz` | Unzip, open the `HyperLocalMarketplace` app inside. A Java runtime is bundled. |
+| Java 17 or newer | `MarketplaceApp.jar` | `java -jar MarketplaceApp.jar` |
+
+Platform names are `windows-x64`, `macos-arm64` (M1 and later), `macos-x64`
+(Intel) and `linux-x64`. `SHA256SUMS.txt` in the same release verifies what you
+downloaded.
+
+**macOS will refuse to open it the first time.** The bundle is not signed with
+an Apple Developer certificate, so Gatekeeper blocks it. Right-click the app and
+choose **Open**, then confirm — once only. Or from the terminal:
+
+```bash
+xattr -dr com.apple.quarantine /path/to/HyperLocalMarketplace.app
+```
+
+### Pointing it at a backend
+
+The client needs the API running somewhere. By default it looks at
+`http://localhost:8000`, so start the backend first (see
+[Quick start](#quick-start) below). To aim it elsewhere:
+
+```bash
+MARKETPLACE_API=https://api.example.com java -jar MarketplaceApp.jar
+# or
+java -Dmarketplace.api=https://api.example.com -jar MarketplaceApp.jar
+```
+
+The bundled app reads the same `MARKETPLACE_API` environment variable.
 
 ---
 
@@ -85,6 +124,17 @@ curl http://localhost:8000/api/health
 ```
 
 ### 2. Frontend
+
+The quickest path, if you have Maven, is to let it fetch JavaFX and org.json
+for you:
+
+```bash
+mvn -f frontend/pom.xml clean package
+java -jar frontend/target/MarketplaceApp.jar
+```
+
+That produces the same jar the releases ship. To work on the client by hand
+instead, the original setup is unchanged and needs no build tool.
 
 Needs Java 17+, the [JavaFX SDK](https://openjfx.io), and
 [json-20231013.jar](https://repo1.maven.org/maven2/org/json/json/20231013/json-20231013.jar)
@@ -200,9 +250,15 @@ hyperlocal-student-marketplace/
 │   └── .env.example       Copy to .env and edit
 ├── frontend/
 │   ├── MarketplaceApp.java   JavaFX client, single file
+│   ├── Launcher.java         entry point for the packaged build only
+│   ├── pom.xml               optional Maven build, produces the release jar
 │   └── lib/                  put json-20231013.jar here
+├── .github/workflows/
+│   ├── tests.yml          backend checks on every push
+│   └── release.yml        builds and publishes downloads on a v* tag
 ├── docs/
 │   └── EMAIL.md
+├── CHANGELOG.md
 ├── requirements.txt
 └── README.md
 ```
@@ -226,13 +282,33 @@ per-user salt and 240,000 iterations, verified in constant time.
 
 ---
 
+## Cutting a release
+
+```bash
+# 1. bump <version> in frontend/pom.xml and move the Unreleased block in
+#    CHANGELOG.md under the new number
+# 2. commit, then:
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The `release` workflow builds the jar once, wraps it in a self-contained app on
+four platforms, checksums everything and opens a **draft** release with the
+files attached. Read it over, edit the notes, then publish. Nothing goes public
+until you click the button.
+
+---
+
 ## Roadmap
 
 - [ ] Token expiry and refresh (sessions currently live until logout)
 - [ ] Students can mark a request fulfilled and close it
 - [ ] Shop ratings after a completed deal
 - [ ] Digest mode: batch offer emails instead of one per offer
-- [ ] Deploy the backend to Railway or Render
+- [ ] Deploy the backend to Railway or Render, so the download works without
+      running a server yourself
+- [ ] Signed macOS and Windows builds, so Gatekeeper and SmartScreen stop
+      warning about them
 - [ ] Android or web client against the same API
 - [ ] Admin view for users and listings
 
