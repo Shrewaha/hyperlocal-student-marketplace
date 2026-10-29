@@ -1,0 +1,184 @@
+# Builds the downloadable client and publishes it to a GitHub Release.
+#
+# Triggered by pushing a version tag:
+#
+#     git tag v1.0.0
+#     git push origin v1.0.0
+#
+# Three things come out of it:
+#
+#   MarketplaceApp.jar              one file, any OS, needs Java 17+ installed
+#   HyperLocalMarketplace-*.zip     app folder with a Java runtime inside
+#   SHA256SUMS.txt                  checksums for all of the above
+#
+# The zips exist because most students do not have a JDK installed and should
+# not have to. jpackage bundles a trimmed runtime next to the app, so the
+# download is unzip-and-run.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Lets you test the build from the Actions tab without cutting a release.
+  workflow_dispatch:
+
+permissions:
+  contents: write # required to create the release and upload files to it
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # One universal jar, built once. Every platform bundle is made from this same
+  # file, so there is no chance of the Windows download being a different build
+  # from the macOS one.
+  # ---------------------------------------------------------------------------
+  jar:
+    name: Build the universal jar
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Build
+        run: mvn -B -f frontend/pom.xml clean package
+
+      - name: Upload the jar for the other jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: jar
+          path: frontend/target/MarketplaceApp.jar
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Self-contained app bundles. jpackage can only build for the OS it runs on,
+  # hence the matrix. macOS appears twice because Apple Silicon and Intel need
+  # different runtimes.
+  # ---------------------------------------------------------------------------
+  bundle:
+    name: Bundle for ${{ matrix.label }}
+    needs: jar
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+          - os: windows-latest
+            label: windows-x64
+          - os: macos-latest
+            label: macos-arm64
+          - os: macos-13
+            label: macos-x64
+
+    steps:
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Download the jar
+        uses: actions/download-artifact@v4
+        with:
+          name: jar
+          path: dist
+
+      - name: Work out the version
+        id: version
+        shell: bash
+        run: |
+          # jpackage demands a version starting with a digit, so the leading
+          # "v" comes off. A manual run has no tag, so it gets a placeholder.
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "number=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the app image
+        shell: bash
+        run: |
+          jpackage \
+            --type app-image \
+            --input dist \
+            --main-jar MarketplaceApp.jar \
+            --main-class Launcher \
+            --name HyperLocalMarketplace \
+            --app-version "${{ steps.version.outputs.number }}" \
+            --description "HyperLocal Student Marketplace client" \
+            --copyright "Shreyansh Kushwaha" \
+            --vendor "Shreyansh Kushwaha" \
+            --dest out
+
+      - name: Compress (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path out/HyperLocalMarketplace `
+            -DestinationPath "HyperLocalMarketplace-${{ steps.version.outputs.number }}-${{ matrix.label }}.zip"
+
+      - name: Compress (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        # -y keeps symlinks as symlinks; a .app bundle is full of them and
+        # flattening them produces an app macOS refuses to launch.
+        run: |
+          cd out
+          zip -r -y "../HyperLocalMarketplace-${{ steps.version.outputs.number }}-${{ matrix.label }}.zip" \
+            HyperLocalMarketplace.app
+
+      - name: Compress (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          tar -czf "HyperLocalMarketplace-${{ steps.version.outputs.number }}-${{ matrix.label }}.tar.gz" \
+            -C out HyperLocalMarketplace
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.label }}
+          path: |
+            *.zip
+            *.tar.gz
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Collect everything and attach it to the release.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish the release
+    needs: [jar, bundle]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect every build
+        uses: actions/download-artifact@v4
+        with:
+          path: staged
+
+      - name: Flatten and checksum
+        run: |
+          mkdir -p release
+          find staged -type f \( -name '*.jar' -o -name '*.zip' -o -name '*.tar.gz' \) \
+            -exec mv {} release/ \;
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          ls -lh
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          draft: true # review it, then hit publish yourself
+          generate_release_notes: true
+          fail_on_unmatched_files: true

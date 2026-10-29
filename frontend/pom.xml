@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Optional build for the JavaFX client.
+
+  MarketplaceApp.java still works the way it always has: drop it in IntelliJ,
+  add the JavaFX SDK and org.json, hit run. This pom exists so that CI can
+  produce something a non-developer can download and open, and so that you can
+  build the same thing locally with one command:
+
+      mvn -f frontend/pom.xml clean package
+
+  The result is target/MarketplaceApp.jar: one file that runs on Windows,
+  macOS and Linux with `java -jar`, with no JavaFX SDK and no module path to
+  set, because the JavaFX natives for every platform are packed inside it.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.github.shrewaha</groupId>
+  <artifactId>marketplace-client</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <name>HyperLocal Student Marketplace</name>
+  <description>JavaFX desktop client for the HyperLocal Student Marketplace</description>
+  <url>https://github.com/shrewaha/hyperlocal-student-marketplace</url>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://github.com/shrewaha/hyperlocal-student-marketplace/blob/main/LICENSE</url>
+    </license>
+  </licenses>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <javafx.version>21.0.4</javafx.version>
+    <json.version>20231013</json.version>
+  </properties>
+
+  <dependencies>
+    <!--
+      JavaFX for every platform at once.
+
+      JavaFX ships its native libraries in classifier-specific jars. Declaring
+      all four means one jar runs anywhere, instead of needing a separate
+      download per operating system. The cost is file size, which for a desktop
+      app nobody notices.
+    -->
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-controls</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>win</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-controls</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>linux</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-controls</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>mac</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-controls</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>mac-aarch64</classifier>
+    </dependency>
+
+    <!-- javafx-controls pulls in base and graphics, but the natives live in
+         graphics, so the platform jars are named explicitly there too. -->
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-graphics</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>win</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-graphics</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>linux</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-graphics</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>mac</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-graphics</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>mac-aarch64</classifier>
+    </dependency>
+
+    <dependency>
+      <groupId>org.json</groupId>
+      <artifactId>json</artifactId>
+      <version>${json.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <!--
+      The sources sit in this folder, not in src/main/java, so that the
+      single-file IntelliJ workflow in the README keeps working untouched.
+    -->
+    <sourceDirectory>${project.basedir}</sourceDirectory>
+    <finalName>MarketplaceApp</finalName>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+
+      <!--
+        Shade everything into one jar.
+
+        Main-Class is Launcher, not MarketplaceApp. A class that extends
+        Application refuses to start from a plain classpath with
+        "JavaFX runtime components are missing"; a plain class that calls
+        Application.launch() for it does not. That indirection is the whole
+        reason Launcher.java exists.
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.6.0</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>Launcher</mainClass>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <!-- Merging several modular jars leaves conflicting
+                         module descriptors; the app runs on the classpath,
+                         so they are dead weight either way. -->
+                    <exclude>module-info.class</exclude>
+                    <exclude>META-INF/versions/*/module-info.class</exclude>
+                    <!-- Someone else's signatures do not survive repacking
+                         and make the JVM reject the jar if left in. -->
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>
