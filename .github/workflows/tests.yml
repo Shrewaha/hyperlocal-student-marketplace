@@ -50,3 +50,31 @@ jobs:
           done
           echo "API did not start in 20 seconds"
           exit 1
+
+  frontend:
+    name: Build the desktop client
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Build the client jar
+        run: mvn -B -f frontend/pom.xml clean package
+
+      - name: Check the jar is runnable
+        # No display on a CI runner, so the window cannot open. Loading the
+        # launcher proves the jar is well formed and JavaFX resolved; actually
+        # starting the UI is what the release bundles are for.
+        run: |
+          unzip -l frontend/target/MarketplaceApp.jar | grep -q 'MarketplaceApp.class'
+          unzip -l frontend/target/MarketplaceApp.jar | grep -q 'Launcher.class'
+          unzip -p frontend/target/MarketplaceApp.jar META-INF/MANIFEST.MF | grep -q 'Main-Class: Launcher'
+          echo "jar looks right"
