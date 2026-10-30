@@ -1,13 +1,14 @@
 /*
- * HyperLocal Student Marketplace -- browser client.
+ * HyperLocal Student Marketplace -- browser and Android client.
  *
- * Talks to the same JSON API as the JavaFX desktop app, so neither one knows
- * the other exists. No framework and no build step: this file is served as
- * written, which keeps the page quick on a phone and a student's data plan.
+ * Talks to the same JSON API as the JavaFX desktop app, so neither knows the
+ * other exists. No framework and no build step: this file is served as
+ * written, which keeps it quick on a phone and a student's data plan, and
+ * lets the APK bundle it unchanged.
  *
- * The token lives in sessionStorage rather than localStorage, so closing the
- * tab signs you out. Every read and write is guarded, because storage throws
- * outright in a private window instead of politely returning nothing.
+ * The token lives in sessionStorage, so closing the tab signs you out. Every
+ * storage read and write is guarded, because storage throws outright in a
+ * private window rather than politely returning nothing.
  */
 
 (function () {
@@ -24,8 +25,8 @@
       else if (value === undefined) return area.getItem(key);
       else area.setItem(key, value);
     } catch (e) {
-      /* Private browsing, or site data blocked. The app still works; it
-         just forgets things between page loads. */
+      /* Private browsing, or site data blocked. The app still works; it just
+         forgets things between loads. */
     }
     return null;
   }
@@ -41,8 +42,9 @@
     token: store(sessionStorage, TOKEN_KEY) || null,
     categories: [],
     areas: [],
+    category: "", // active chip on the browse screen
     myAreaOnly: false,
-    lastRequestId: null,
+    view: "browse",
   };
 
   var money = new Intl.NumberFormat("en-IN", {
@@ -69,13 +71,52 @@
     if (el) el.textContent = value;
   }
 
-  /* An element builder, so that nothing user-supplied is ever concatenated
-     into HTML. A shop name is not markup. */
+  /* Built as elements, never as HTML strings: a shop name is not markup. */
   function el(tag, className, content) {
     var node = document.createElement(tag);
     if (className) node.className = className;
     if (content !== undefined && content !== null) node.textContent = content;
     return node;
+  }
+
+  function icon(symbolId, cls) {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    if (cls) svg.setAttribute("class", cls);
+    svg.setAttribute("aria-hidden", "true");
+    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#" + symbolId);
+    svg.appendChild(use);
+    return svg;
+  }
+
+  /* --------------------------------------------------------- categories */
+
+  /*
+   * Each category owns a colour and a glyph. With no product photography in
+   * the API, this is what fills the space a photo would occupy -- a flat
+   * saturated block reads as a decision, where a tinted grey rectangle reads
+   * as an image that failed to load.
+   */
+  var CATEGORY_LOOK = {
+    Electronics: { glyph: "g-electronics", color: "var(--cat-electronics)" },
+    Stationery: { glyph: "g-stationery", color: "var(--cat-stationery)" },
+    "Lab Components": { glyph: "g-lab", color: "var(--cat-lab)" },
+    Books: { glyph: "g-books", color: "var(--cat-books)" },
+    "Computer Parts": { glyph: "g-computer", color: "var(--cat-computer)" },
+    Tools: { glyph: "g-tools", color: "var(--cat-tools)" },
+    Other: { glyph: "g-other", color: "var(--cat-other)" },
+  };
+
+  function look(category) {
+    return CATEGORY_LOOK[category] || CATEGORY_LOOK.Other;
+  }
+
+  function artBlock(category, className) {
+    var l = look(category);
+    var box = el("div", className);
+    box.style.setProperty("--cat", l.color);
+    box.appendChild(icon(l.glyph));
+    return box;
   }
 
   /* --------------------------------------------------------------- fetch */
@@ -94,12 +135,15 @@
     }
 
     /* A free-tier host sleeps when idle and takes most of a minute to wake.
-       Without a word on screen that looks like the page is broken. */
+       Without a word on screen that looks like the app is broken. */
     clearTimeout(slowTimer);
     slowTimer = setTimeout(function () {
-      var note = $("#waking");
-      if (!note) {
-        note = el("div", "waking", "Waking the server… the free host sleeps when idle, so the first request can take up to a minute.");
+      if (!$("#waking")) {
+        var note = el(
+          "div",
+          "waking",
+          "Waking the server… the free host sleeps when idle, so the first request can take a minute."
+        );
         note.id = "waking";
         $("#main").prepend(note);
       }
@@ -109,12 +153,12 @@
 
     /*
      * A sleeping instance drops the connection on the request that wakes it,
-     * and anything else in flight alongside it. fetch rejects with a
-     * TypeError for that, which is indistinguishable from a real outage on
-     * one try -- so a read is simply tried again before giving up.
+     * and anything in flight beside it. fetch rejects with a TypeError, which
+     * on one try is indistinguishable from a real outage -- so a read is
+     * tried again before giving up.
      *
-     * Only reads. Retrying a POST could send the same offer twice, and a
-     * duplicate offer is worse than an error message.
+     * Reads only. Retrying a POST could file the same offer twice, which is
+     * worse than an error message.
      */
     var retries = method === "GET" ? 2 : 0;
 
@@ -167,44 +211,102 @@
     });
   }
 
+  /* ------------------------------------------------------------ the tabs */
+
+  /*
+   * Which tabs exist depends on who is signed in. A shop has no use for
+   * "Post", and a signed-out visitor has nothing but browsing and signing in.
+   */
+  var TABS = {
+    out: [
+      { view: "browse", label: "Browse", glyph: "t-browse" },
+      { view: "auth", label: "Sign in", glyph: "t-user" },
+    ],
+    student: [
+      { view: "browse", label: "Browse", glyph: "t-browse" },
+      { view: "post", label: "Post", glyph: "t-post" },
+      { view: "mine", label: "Requests", glyph: "t-list" },
+      { view: "account", label: "Account", glyph: "t-user" },
+    ],
+    shop: [
+      { view: "browse", label: "Browse", glyph: "t-browse" },
+      { view: "requests", label: "Requests", glyph: "t-list" },
+      { view: "offers-mine", label: "My offers", glyph: "t-post" },
+      { view: "account", label: "Account", glyph: "t-user" },
+    ],
+  };
+
+  function tabSet() {
+    if (!state.user) return TABS.out;
+    return state.user.role === "shop" ? TABS.shop : TABS.student;
+  }
+
+  /* Screens reached from a tab rather than being one. The tab that leads
+     here stays lit, so the bar never goes blank mid-journey. */
+  var PARENT_OF = { compare: "mine" };
+
+  function paintTabs() {
+    var nav = $("#tabs");
+    nav.textContent = "";
+    var active = PARENT_OF[state.view] || state.view;
+    tabSet().forEach(function (t) {
+      var b = el("button", "tab");
+      b.type = "button";
+      b.appendChild(icon(t.glyph));
+      b.appendChild(el("span", null, t.label));
+      if (active === t.view) b.setAttribute("aria-current", "page");
+      b.addEventListener("click", function () {
+        go(t.view);
+      });
+      nav.appendChild(b);
+    });
+  }
+
   /* ----------------------------------------------------------- navigation */
 
-  var views = ["browse", "auth", "student", "shop", "offers"];
+  var VIEWS = [
+    "browse",
+    "auth",
+    "post",
+    "mine",
+    "requests",
+    "offers-mine",
+    "compare",
+    "account",
+  ];
 
   function go(name) {
-    if (name === "home") name = state.user ? state.user.role : "auth";
-    views.forEach(function (v) {
+    if (name === "home") name = state.user ? tabSet()[0].view : "browse";
+    state.view = name;
+
+    VIEWS.forEach(function (v) {
       show($("#view-" + v), v === name);
     });
+
+    // Search and chips belong to browsing and would be noise anywhere else.
+    show($("#browse-tools"), name === "browse");
+    // The best-price bar belongs to the comparison screen alone.
+    if (name !== "compare") show($("#bestbar"), false);
+
+    paintTabs();
     window.scrollTo({ top: 0, behavior: "instant" });
 
     if (name === "browse") loadProducts();
-    if (name === "student") loadMyRequests();
-    if (name === "shop") {
-      /* One at a time. Three parallel requests at an instance that is still
-         waking gets some of them dropped, and the screen fills with errors
-         for what is really just a cold start. */
-      loadOpenRequests()
-        .then(loadMyOffers)
-        .then(loadMyProducts)
-        .catch(function () {});
-    }
+    if (name === "mine") loadMyRequests();
+    if (name === "requests") loadOpenRequests();
+    if (name === "offers-mine") loadMyOffers().then(loadMyProducts).catch(function () {});
+    if (name === "account") paintAccount();
   }
 
-  function paintSession() {
-    var signedIn = !!state.user;
-    show($("#who"), signedIn);
-    show($("#nav-home"), signedIn);
-    show($("#nav-out"), signedIn);
-    show($("#nav-auth"), !signedIn);
-    if (signedIn) {
-      text(
-        $("#who"),
-        (state.user.shop_name || state.user.name) +
-          " · " +
-          (state.user.role === "shop" ? "Shop" : "Student")
-      );
-    }
+  function paintAccount() {
+    if (!state.user) return;
+    text($("#account-name"), state.user.shop_name || state.user.name);
+    text(
+      $("#account-meta"),
+      [state.user.role === "shop" ? "Shop" : "Student", state.user.area, state.user.email]
+        .filter(Boolean)
+        .join(" · ")
+    );
   }
 
   /* ------------------------------------------------------------ catalogue */
@@ -214,17 +316,33 @@
       .then(function (data) {
         state.categories = data.categories || [];
         document.querySelectorAll("[data-categories]").forEach(function (sel) {
-          var keepAny = sel.querySelector('option[value=""]');
           sel.textContent = "";
-          if (keepAny) sel.appendChild(keepAny);
           state.categories.forEach(function (c) {
             sel.appendChild(new Option(c, c));
           });
         });
+        paintChips();
       })
       .catch(function () {
-        /* The forms still submit; the server validates the category anyway. */
+        /* Forms still submit; the server validates the category anyway. */
       });
+  }
+
+  function paintChips() {
+    var box = $("#chips");
+    box.textContent = "";
+    var all = [""].concat(state.categories);
+    all.forEach(function (c) {
+      var b = el("button", "chip", c || "All");
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(state.category === c));
+      b.addEventListener("click", function () {
+        state.category = c;
+        paintChips();
+        loadProducts();
+      });
+      box.appendChild(b);
+    });
   }
 
   /* ---------------------------------------------------------------- areas */
@@ -232,11 +350,9 @@
   /*
    * Area decides which shops hear about a request, and it is typed by hand.
    * Someone who invents a spelling nobody else uses gets a marketplace of
-   * one: their request reaches no shop, and the screen that follows looks
-   * exactly like one where shops simply have not replied yet. Suggesting the
-   * areas already in use is what stops that happening in the first place.
+   * one: their request reaches no shop, and that looks exactly like a request
+   * nobody has answered yet. Suggesting the areas in use prevents it.
    */
-
   function loadAreas() {
     return request("/api/areas", { auth: false })
       .then(function (data) {
@@ -247,24 +363,22 @@
         state.areas.forEach(function (a) {
           var opt = document.createElement("option");
           opt.value = a.area;
-          // Shown beside the suggestion by most browsers, so the choice
-          // carries the reason to make it.
           opt.label = a.shops === 1 ? "1 shop" : a.shops + " shops";
           list.appendChild(opt);
         });
       })
-      .catch(function () {
-        /* Suggestions are a convenience. Typing an area still works. */
-      });
+      .catch(function () {});
+  }
+
+  function areaKey(s) {
+    return (s || "").trim().replace(/\s+/g, " ").toLowerCase();
   }
 
   function areaMatch(typed) {
-    var key = (typed || "").trim().replace(/\s+/g, " ").toLowerCase();
+    var key = areaKey(typed);
     if (!key) return null;
     for (var i = 0; i < state.areas.length; i++) {
-      if (state.areas[i].area.trim().replace(/\s+/g, " ").toLowerCase() === key) {
-        return state.areas[i];
-      }
+      if (areaKey(state.areas[i].area) === key) return state.areas[i];
     }
     return null;
   }
@@ -313,55 +427,57 @@
 
   /* --------------------------------------------------------------- browse */
 
+  function emptyState(node, title, body) {
+    node.textContent = "";
+    node.appendChild(el("strong", null, title));
+    node.appendChild(document.createTextNode(body));
+    show(node, true);
+  }
+
   function loadProducts() {
-    var form = $("#search");
     var params = new URLSearchParams();
-    ["q", "category", "area"].forEach(function (k) {
-      var v = form.elements[k].value.trim();
-      if (v) params.set(k, v);
-    });
+    var q = $("#search").elements.q.value.trim();
+    if (q) params.set("q", q);
+    if (state.category) params.set("category", state.category);
 
-    var list = $("#products");
+    var grid = $("#products");
     var empty = $("#products-empty");
-    list.textContent = "";
+    grid.textContent = "";
+    show(empty, false);
 
-    request("/api/products?" + params.toString(), { auth: false })
+    return request("/api/products?" + params.toString(), { auth: false })
       .then(function (data) {
         var items = data.products || [];
-        show(empty, items.length === 0);
         if (!items.length) {
-          empty.textContent = "";
-          empty.appendChild(el("strong", null, "Nothing listed yet."));
-          empty.appendChild(
-            document.createTextNode(
-              "When shops add products they appear here, cheapest first."
-            )
+          emptyState(
+            empty,
+            q || state.category ? "Nothing matches." : "Nothing listed yet.",
+            q || state.category
+              ? "Try a different search, or clear the category filter."
+              : "When shops add products they show up here, cheapest first."
           );
           return;
         }
         items.forEach(function (p) {
-          var li = el("li");
-          li.appendChild(el("span", "list__title", p.name));
-          li.appendChild(
-            el(
-              "span",
-              "list__meta",
-              [p.shop_name || p.shop_contact, p.area, p.specs]
-                .filter(Boolean)
-                .join(" · ")
-            )
+          var card = el("article", "tile");
+          var art = artBlock(p.category, "tile__art");
+          if (p.stock === 0) art.appendChild(el("span", "tile__badge", "OUT OF STOCK"));
+          card.appendChild(art);
+
+          var body = el("div", "tile__body");
+          body.appendChild(el("h3", "tile__name", p.name));
+          body.appendChild(
+            el("span", "tile__meta", [p.shop_name || p.shop_contact, p.area].filter(Boolean).join(" · "))
           );
-          var side = el("span", "list__side");
-          side.appendChild(el("span", "price", rupees(p.price)));
-          li.appendChild(side);
-          list.appendChild(li);
+          var foot = el("div", "tile__foot");
+          foot.appendChild(el("span", "price", rupees(p.price)));
+          body.appendChild(foot);
+          card.appendChild(body);
+          grid.appendChild(card);
         });
       })
       .catch(function (err) {
-        show(empty, true);
-        empty.textContent = "";
-        empty.appendChild(el("strong", null, "Could not load listings."));
-        empty.appendChild(document.createTextNode(err.message));
+        emptyState(empty, "Could not load listings.", err.message);
       });
   }
 
@@ -378,6 +494,7 @@
       ? "new-password"
       : "current-password";
     paintRoleFields();
+    paintAreaHint();
   }
 
   function paintRoleFields() {
@@ -386,18 +503,19 @@
     show($("#shop-name-field"), registering && role === "shop");
   }
 
+  function afterSignIn(data) {
+    state.token = data.token;
+    state.user = data.user;
+    store(sessionStorage, TOKEN_KEY, data.token);
+    go("home");
+  }
+
   function signIn(email, password) {
     return request("/api/login", {
       method: "POST",
       auth: false,
       body: { email: email, password: password },
-    }).then(function (data) {
-      state.token = data.token;
-      state.user = data.user;
-      store(sessionStorage, TOKEN_KEY, data.token);
-      paintSession();
-      go("home");
-    });
+    }).then(afterSignIn);
   }
 
   function restoreSession() {
@@ -405,7 +523,6 @@
     return request("/api/me")
       .then(function (user) {
         state.user = user;
-        paintSession();
       })
       .catch(function () {
         state.token = null;
@@ -419,29 +536,30 @@
     var list = $("#my-requests");
     var empty = $("#my-requests-empty");
     list.textContent = "";
+    show(empty, false);
 
-    request("/api/requests/mine")
+    return request("/api/requests/mine")
       .then(function (data) {
         var items = data.requests || [];
-        show(empty, items.length === 0);
         if (!items.length) {
-          empty.textContent = "";
-          empty.appendChild(el("strong", null, "No requests yet."));
-          empty.appendChild(
-            document.createTextNode("Post one above and nearby shops will be emailed.")
+          emptyState(
+            empty,
+            "No requests yet.",
+            "Post one from the Post tab and nearby shops are emailed."
           );
           return;
         }
         items.forEach(function (r) {
           var li = el("li");
-          var title = el("span", "list__title", r.title);
-          li.appendChild(title);
-          li.appendChild(
+          li.appendChild(artBlock(r.category, "row__art"));
+
+          var main = el("div", "row__main");
+          main.appendChild(el("div", "row__name", r.title));
+          main.appendChild(
             el(
-              "span",
-              "list__meta",
+              "div",
+              "row__meta",
               [
-                r.category,
                 r.budget ? "budget " + rupees(r.budget) : null,
                 r.offer_count + (r.offer_count === 1 ? " offer" : " offers"),
               ]
@@ -450,24 +568,26 @@
             )
           );
 
-          var side = el("span", "list__side");
+          var side = el("div", "row__side");
           if (r.best_price !== null && r.best_price !== undefined) {
-            side.appendChild(el("span", "price", rupees(r.best_price)));
-            side.appendChild(el("span", "tag", "BEST SO FAR"));
+            side.appendChild(el("span", "price price--best", rupees(r.best_price)));
           }
-          var view = el("button", "btn btn--sm", r.offer_count ? "Compare" : "No offers yet");
+          var view = el("button", "btn btn--sm", r.offer_count ? "Compare" : "Waiting");
+          view.type = "button";
           view.disabled = !r.offer_count;
+          if (r.offer_count) view.className = "btn btn--sm btn--primary";
           view.addEventListener("click", function () {
             openOffers(r.id);
           });
           side.appendChild(view);
+
+          li.appendChild(main);
           li.appendChild(side);
           list.appendChild(li);
         });
       })
       .catch(function (err) {
-        show(empty, true);
-        empty.textContent = err.message;
+        emptyState(empty, "Could not load your requests.", err.message);
       });
   }
 
@@ -477,34 +597,34 @@
     var list = $("#open-requests");
     var empty = $("#open-requests-empty");
     list.textContent = "";
+    show(empty, false);
 
     return request("/api/requests/open?my_area_only=" + (state.myAreaOnly ? "true" : "false"))
       .then(function (data) {
         var items = data.requests || [];
-        show(empty, items.length === 0);
         if (!items.length) {
-          empty.textContent = "";
-          empty.appendChild(el("strong", null, "Nothing open right now."));
-          empty.appendChild(
-            document.createTextNode(
-              state.myAreaOnly
-                ? "No student in your area has posted yet. Turn off the area filter to see everything."
-                : "When a student posts a request it shows up here."
-            )
+          emptyState(
+            empty,
+            "Nothing open right now.",
+            state.myAreaOnly
+              ? "No student in your area has posted yet. Turn off the filter to see everything."
+              : "When a student posts a request it shows up here."
           );
           return;
         }
         items.forEach(function (r) {
           var li = el("li");
-          li.appendChild(el("span", "list__title", r.title));
-          li.appendChild(
+          li.appendChild(artBlock(r.category, "row__art"));
+
+          var main = el("div", "row__main");
+          main.appendChild(el("div", "row__name", r.title));
+          main.appendChild(
             el(
-              "span",
-              "list__meta",
+              "div",
+              "row__meta",
               [
                 r.student_name,
                 r.student_area,
-                r.category,
                 r.specs,
                 r.offer_count + (r.offer_count === 1 ? " offer" : " offers"),
               ]
@@ -513,20 +633,26 @@
             )
           );
 
-          var side = el("span", "list__side");
+          var side = el("div", "row__side");
           if (r.budget) side.appendChild(el("span", "price", rupees(r.budget)));
-          var btn = el("button", "btn btn--sm", r.i_offered ? "Offer again" : "Send offer");
+          var btn = el(
+            "button",
+            r.i_offered ? "btn btn--sm" : "btn btn--sm btn--primary",
+            r.i_offered ? "Offer again" : "Send offer"
+          );
+          btn.type = "button";
           btn.addEventListener("click", function () {
             openOfferDialog(r);
           });
           side.appendChild(btn);
+
+          li.appendChild(main);
           li.appendChild(side);
           list.appendChild(li);
         });
       })
       .catch(function (err) {
-        show(empty, true);
-        empty.textContent = err.message;
+        emptyState(empty, "Could not load open requests.", err.message);
       });
   }
 
@@ -534,86 +660,86 @@
     var list = $("#my-offers");
     var empty = $("#my-offers-empty");
     list.textContent = "";
+    show(empty, false);
 
     return request("/api/offers/mine")
       .then(function (data) {
         var items = data.offers || [];
-        show(empty, items.length === 0);
         if (!items.length) {
-          empty.textContent = "";
-          empty.appendChild(el("strong", null, "No offers sent."));
-          empty.appendChild(
-            document.createTextNode("Reply to an open request above to send your first.")
+          emptyState(
+            empty,
+            "No offers sent.",
+            "Reply to an open request from the Requests tab to send your first."
           );
           return;
         }
         items.forEach(function (o) {
           var li = el("li");
-          li.appendChild(el("span", "list__title", o.product_name));
-          li.appendChild(
-            el(
-              "span",
-              "list__meta",
-              ["for “" + o.request_title + "”", o.note].filter(Boolean).join(" · ")
-            )
+          var main = el("div", "row__main");
+          main.appendChild(el("div", "row__name", o.product_name));
+          main.appendChild(
+            el("div", "row__meta", "for “" + o.request_title + "”")
           );
 
-          var side = el("span", "list__side");
-          side.appendChild(el("span", "price", rupees(o.price)));
+          var side = el("div", "row__side");
+          side.appendChild(
+            el("span", o.is_best ? "price price--best" : "price", rupees(o.price))
+          );
           if (o.is_best) {
-            side.appendChild(el("span", "tag", "CHEAPEST"));
+            side.appendChild(el("span", "saving", "Cheapest"));
           } else if (o.best_price !== null && o.best_price !== undefined) {
             side.appendChild(
               el("span", "delta", "beaten by " + rupees(Number(o.price) - Number(o.best_price)))
             );
           }
+
+          li.appendChild(main);
           li.appendChild(side);
           list.appendChild(li);
         });
       })
       .catch(function (err) {
-        show(empty, true);
-        empty.textContent = err.message;
+        emptyState(empty, "Could not load your offers.", err.message);
       });
   }
 
   function loadMyProducts() {
-    var list = $("#my-products");
-    list.textContent = "";
+    var grid = $("#my-products");
+    grid.textContent = "";
     return request("/api/products/mine")
       .then(function (data) {
         (data.products || []).forEach(function (p) {
-          var li = el("li");
-          li.appendChild(el("span", "list__title", p.name));
-          li.appendChild(
-            el(
-              "span",
-              "list__meta",
-              [p.category, p.specs, "stock " + p.stock].filter(Boolean).join(" · ")
-            )
-          );
-          var side = el("span", "list__side");
-          side.appendChild(el("span", "price", rupees(p.price)));
-          li.appendChild(side);
-          list.appendChild(li);
+          var card = el("article", "tile");
+          card.appendChild(artBlock(p.category, "tile__art"));
+          var body = el("div", "tile__body");
+          body.appendChild(el("h3", "tile__name", p.name));
+          body.appendChild(el("span", "tile__meta", "stock " + p.stock));
+          var foot = el("div", "tile__foot");
+          foot.appendChild(el("span", "price", rupees(p.price)));
+          body.appendChild(foot);
+          card.appendChild(body);
+          grid.appendChild(card);
         });
       })
       .catch(function () {});
   }
 
-  /* ----------------------------------------------- the comparison table */
+  /* ----------------------------------------------- the comparison screen */
 
   function openOffers(requestId) {
-    state.lastRequestId = requestId;
-    go("offers");
+    go("compare");
 
     var list = $("#offers");
     var empty = $("#offers-empty");
     var summary = $("#offers-summary");
+    var slot = $("#best-slot");
     list.textContent = "";
     summary.textContent = "";
+    slot.textContent = "";
+    show(empty, false);
+    show($("#bestbar"), false);
 
-    request("/api/requests/" + requestId + "/offers")
+    return request("/api/requests/" + requestId + "/offers")
       .then(function (data) {
         text($("#offers-title"), data.request.title);
         text(
@@ -621,16 +747,15 @@
           [data.request.category, data.request.specs].filter(Boolean).join(" · ")
         );
 
+        var under =
+          data.request.budget && data.best_price !== null
+            ? Number(data.request.budget) - Number(data.best_price)
+            : null;
+
         [
           ["Offers", String(data.offer_count)],
-          ["Best price", rupees(data.best_price)],
-          ["Your budget", rupees(data.request.budget)],
-          [
-            "Under budget by",
-            data.request.budget && data.best_price !== null
-              ? rupees(Number(data.request.budget) - Number(data.best_price))
-              : "—",
-          ],
+          ["Budget", rupees(data.request.budget)],
+          [under !== null && under >= 0 ? "You save" : "Over budget", under === null ? "—" : rupees(Math.abs(under))],
         ].forEach(function (pair) {
           var box = el("div");
           box.appendChild(el("dt", null, pair[0]));
@@ -639,42 +764,65 @@
         });
 
         var offers = data.offers || [];
-        show(empty, offers.length === 0);
         if (!offers.length) {
-          empty.textContent = "";
-          empty.appendChild(el("strong", null, "No offers yet."));
-          empty.appendChild(
-            document.createTextNode("Shops in your area have been emailed about this request.")
+          emptyState(
+            empty,
+            "No offers yet.",
+            "Shops in your area have been emailed about this request."
           );
           return;
         }
 
-        offers.forEach(function (o) {
-          var li = el("li", o.is_best ? "offer--best" : null);
-          li.appendChild(el("span", "list__title", o.shop_name));
-          li.appendChild(
+        /* The cheapest offer gets a card of its own above the list -- it is
+           the answer the student opened this screen for. */
+        var best = offers[0];
+        var card = el("div", "best-card");
+        card.appendChild(el("span", "best-card__tag", "CHEAPEST"));
+        card.appendChild(el("div", "best-card__shop", best.shop_name));
+        card.appendChild(
+          el(
+            "div",
+            "best-card__meta",
+            [best.product_name, best.area, best.specs, best.note].filter(Boolean).join(" · ")
+          )
+        );
+        var price = el("div", "best-card__price");
+        price.appendChild(el("span", "price price--lg price--best", rupees(best.price)));
+        if (under !== null && under >= 0) {
+          price.appendChild(el("span", "saving", rupees(under) + " under budget"));
+        }
+        card.appendChild(price);
+        slot.appendChild(card);
+
+        offers.slice(1).forEach(function (o) {
+          var li = el("li");
+          var main = el("div", "row__main");
+          main.appendChild(el("div", "row__name", o.shop_name));
+          main.appendChild(
             el(
-              "span",
-              "list__meta",
+              "div",
+              "row__meta",
               [o.product_name, o.area, o.specs, o.note].filter(Boolean).join(" · ")
             )
           );
-
-          var side = el("span", "list__side");
-          side.appendChild(el("span", "price price--lg", rupees(o.price)));
-          if (o.is_best) side.appendChild(el("span", "tag", "CHEAPEST"));
-          else side.appendChild(el("span", "delta", "+" + rupees(o.price_diff_vs_best)));
+          var side = el("div", "row__side");
+          side.appendChild(el("span", "price", rupees(o.price)));
+          side.appendChild(el("span", "delta", "+" + rupees(o.price_diff_vs_best)));
+          li.appendChild(main);
           li.appendChild(side);
           list.appendChild(li);
         });
+
+        text($("#bestbar-shop"), best.shop_name);
+        text($("#bestbar-price"), rupees(best.price));
+        show($("#bestbar"), true);
       })
       .catch(function (err) {
-        show(empty, true);
-        empty.textContent = err.message;
+        emptyState(empty, "Could not load the offers.", err.message);
       });
   }
 
-  /* -------------------------------------------------------------- dialogs */
+  /* -------------------------------------------------------------- sheets */
 
   var offerTarget = null;
 
@@ -682,10 +830,14 @@
     offerTarget = req;
     var form = $("#offer-form");
     form.reset();
-    text($("#offer-msg"), "");
     text($("#offer-for"), req.title + (req.budget ? " · budget " + rupees(req.budget) : ""));
     form.elements.product_name.value = req.title;
     $("#offer-dialog").showModal();
+  }
+
+  function openApiDialog() {
+    $("#api-form").elements.api.value = apiBase();
+    $("#api-dialog").showModal();
   }
 
   /* ------------------------------------------------------------- wiring */
@@ -698,22 +850,20 @@
     }
   });
 
+  $("#compare-back").addEventListener("click", function () {
+    go("home");
+  });
+
   $("#nav-out").addEventListener("click", function () {
     request("/api/logout", { method: "POST" }).catch(function () {});
     state.token = null;
     state.user = null;
     store(sessionStorage, TOKEN_KEY, null);
-    paintSession();
     go("browse");
   });
 
   $("#nav-api").addEventListener("click", openApiDialog);
   $("#no-api-set").addEventListener("click", openApiDialog);
-
-  function openApiDialog() {
-    $("#api-form").elements.api.value = apiBase();
-    $("#api-dialog").showModal();
-  }
 
   $("#api-dialog").addEventListener("close", function () {
     var dlg = $("#api-dialog");
@@ -730,6 +880,13 @@
   $("#search").addEventListener("submit", function (e) {
     e.preventDefault();
     loadProducts();
+  });
+
+  /* Search as you type, but not on every keystroke. */
+  var searchTimer = null;
+  $("#search").addEventListener("input", function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadProducts, 350);
   });
 
   $("#auth-switch").addEventListener("click", function () {
@@ -759,18 +916,16 @@
     var email = f.email.value.trim();
     var password = f.password.value;
 
-    var done = function (err) {
+    var failed = function (err) {
       msg.className = "msg msg--bad";
       text(msg, err.message);
     };
+    var done = function () {
+      text(msg, "");
+    };
 
     if (!registering) {
-      signIn(email, password).then(
-        function () {
-          text(msg, "");
-        },
-        done
-      );
+      signIn(email, password).then(done, failed);
       return;
     }
 
@@ -790,12 +945,7 @@
       .then(function () {
         return signIn(email, password);
       })
-      .then(
-        function () {
-          text(msg, "");
-        },
-        done
-      );
+      .then(done, failed);
   });
 
   $("#request-form").addEventListener("submit", function (e) {
@@ -839,7 +989,6 @@
               : "Posted. " + n + " shops in " + where + " have been emailed."
           );
         }
-        loadMyRequests();
       },
       function (err) {
         msg.className = "msg msg--bad";
@@ -894,9 +1043,7 @@
       },
     }).then(
       function () {
-        loadOpenRequests()
-          .then(loadMyOffers)
-          .catch(function () {});
+        loadOpenRequests().catch(function () {});
       },
       function (err) {
         window.alert(err.message);
@@ -915,7 +1062,7 @@
   if (!apiBase()) {
     show($("#no-api"), true);
     paintAuthMode();
-    paintSession();
+    paintTabs();
     return;
   }
 
