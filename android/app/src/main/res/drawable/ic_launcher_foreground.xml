@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Two price bars, the shorter one highlighted: the cheapest offer winning,
+  which is what the app is for. Kept inside the 72dp adaptive-icon safe zone
+  so no launcher shape crops it.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M31,38 L79,38 A5,5 0 0 1 79,48 L31,48 A5,5 0 0 1 31,38 Z" />
+
+    <path
+        android:fillColor="#E8A33D"
+        android:pathData="M31,60 L65,60 A5,5 0 0 1 65,70 L31,70 A5,5 0 0 1 31,60 Z" />
+</vector>

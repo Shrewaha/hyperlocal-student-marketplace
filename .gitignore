@@ -23,9 +23,22 @@ env/
 *.class
 *.jar
 !frontend/lib/*.jar
+# The Gradle wrapper jar is checked in on purpose: without it ./gradlew cannot
+# start, so a fresh clone (CI included) could not build the Android app.
+!android/gradle/wrapper/gradle-wrapper.jar
 out/
 target/
 bin/
+
+# --- Android ---------------------------------------------------------------
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
 
 # --- IDEs ------------------------------------------------------------------
 .idea/

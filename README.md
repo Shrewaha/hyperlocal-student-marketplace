@@ -23,12 +23,29 @@ Grab the client from the [latest release](https://github.com/Shrewaha/hyperlocal
 
 | You have | Take | How to run it |
 |---|---|---|
+| An Android phone | `HyperLocalMarketplace-<version>-android.apk` | Open the file and allow installs from your browser when asked. |
 | No Java installed | `HyperLocalMarketplace-<version>-<your-platform>.zip` or `.tar.gz` | Unzip, open the `HyperLocalMarketplace` app inside. A Java runtime is bundled. |
 | Java 17 or newer | `MarketplaceApp.jar` | `java -jar MarketplaceApp.jar` |
 
 Platform names are `windows-x64`, `macos-arm64` (M1 and later), `macos-x64`
 (Intel) and `linux-x64`. `SHA256SUMS.txt` in the same release verifies what you
 downloaded.
+
+### Android
+
+The APK is a WebView around the same client the website serves, with the page
+bundled inside it rather than fetched, so the interface opens instantly and
+only the offers themselves need a connection.
+
+It is **debug-signed**, which is what lets it be built without a private key
+living in the repository. Android will warn that it comes from an unknown
+developer and ask you to allow installs from whichever app you opened it with.
+That is expected for an APK distributed outside the Play Store. Signing it
+properly needs a keystore and a Play Console account, and is on the roadmap.
+
+Requires Android 7.0 or newer.
+
+### macOS
 
 **macOS will refuse to open it the first time.** The bundle is not signed with
 an Apple Developer certificate, so Gatekeeper blocks it. Right-click the app and
@@ -97,6 +114,7 @@ writes a `failed` row to the email log.
 | Database | SQLite | One file, zero setup, enough for a campus-scale app |
 | Desktop client | Java, JavaFX | Single file, runs from an IDE or as a packaged download |
 | Web client | Plain HTML, CSS, JS | No framework and no build step, so it loads fast on a phone |
+| Android client | WebView around `web/` | One screen of Java; the web client is the app, so the two never drift |
 | API | Pure JSON REST | No templates, so a web or Android client can be added later |
 | Auth | Bearer tokens in a `sessions` table | Simple to reason about and to revoke |
 | Email | stdlib `smtplib` | No third-party dependency, works with any SMTP provider |
@@ -262,6 +280,8 @@ hyperlocal-student-marketplace/
 │   ├── app.js             no framework, no build step
 │   ├── styles.css
 │   └── config.js          put your deployed API URL here
+├── android/
+│   └── app/src/main/      WebView wrapper; web/ is copied in at build time
 ├── .github/workflows/
 │   ├── tests.yml          backend checks on every push
 │   ├── release.yml        builds and publishes downloads on a v* tag

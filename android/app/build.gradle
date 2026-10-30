@@ -1,0 +1,67 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "io.github.shrewaha.marketplace"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "io.github.shrewaha.marketplace"
+        minSdk 24          // Android 7.0, 2016 -- covers effectively every phone in use
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            // No shrinking: there is one Activity and no library code worth
+            // stripping, and R8 on an unsigned build adds a failure mode for
+            // no size benefit.
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // WebViewAssetLoader. It serves the bundled files over an https:// origin
+    // instead of file://, which is the whole reason it is here -- see the
+    // comment in MainActivity.
+    implementation "androidx.webkit:webkit:1.11.0"
+}
+
+/*
+ * The web client is not duplicated into the Android project. It is copied out
+ * of ../web at build time, so the phone app and the page at
+ * shrewaha.github.io can never drift apart.
+ */
+def webSource = rootProject.file("../web")
+
+tasks.register("copyWebAssets", Copy) {
+    from webSource
+    into layout.buildDirectory.dir("generated/webAssets/web")
+    // config.js carries the API address and must travel with the rest.
+    include "**/*"
+}
+
+android.sourceSets.main.assets.srcDirs += [layout.buildDirectory.dir("generated/webAssets")]
+
+tasks.named("preBuild") {
+    dependsOn "copyWebAssets"
+}
+
+// Fail loudly rather than shipping an APK with an empty white screen inside.
+tasks.named("copyWebAssets") {
+    doFirst {
+        if (!new File(webSource, "index.html").exists()) {
+            throw new GradleException(
+                    "web/index.html not found at ${webSource} -- the APK would contain no app.")
+        }
+    }
+}
