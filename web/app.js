@@ -291,11 +291,53 @@
     paintTabs();
     window.scrollTo({ top: 0, behavior: "instant" });
 
-    if (name === "browse") loadProducts();
+    if (name === "browse") {
+      paintBrowseIntro();
+      loadProducts();
+    }
     if (name === "mine") loadMyRequests();
     if (name === "requests") loadOpenRequests();
     if (name === "offers-mine") loadMyOffers().then(loadMyProducts).catch(function () {});
     if (name === "account") paintAccount();
+  }
+
+  /*
+   * The browse screen speaks to whoever is reading it, and always offers the
+   * one thing they can do next. Previously it told everybody to post and
+   * showed no control for it: students had the Post tab, shops had no such
+   * tab and no explanation, and a signed-out visitor had neither.
+   */
+  function paintBrowseIntro() {
+    var cta = $("#browse-cta");
+    var role = state.user && state.user.role;
+
+    if (role === "shop") {
+      text($("#browse-title"), "What students are buying.");
+      text(
+        $("#browse-sub"),
+        "This is every shop's listings, yours included. Requests waiting for a price are under Requests."
+      );
+      text(cta, "See open requests");
+      cta.onclick = function () {
+        go("requests");
+      };
+      return;
+    }
+
+    text($("#browse-title"), "Shops come to you.");
+    text(
+      $("#browse-sub"),
+      "Post what you need with your budget. Nearby shops reply with prices."
+    );
+    text(cta, "Post what you need");
+    cta.onclick = function () {
+      if (state.user) {
+        go("post");
+      } else {
+        // Straight into signing up as a student, since that is who posts.
+        openAuth(true);
+      }
+    };
   }
 
   function paintAccount() {
@@ -427,10 +469,21 @@
 
   /* --------------------------------------------------------------- browse */
 
-  function emptyState(node, title, body) {
+  /* An empty screen is a place to act, not just a notice. Where there is an
+     obvious next step, it arrives as a button rather than as instructions
+     pointing at a tab. */
+  function emptyState(node, title, body, action) {
     node.textContent = "";
     node.appendChild(el("strong", null, title));
     node.appendChild(document.createTextNode(body));
+    if (action) {
+      var btn = el("button", "btn btn--primary btn--sm", action.label);
+      btn.type = "button";
+      btn.style.marginTop = "0.9rem";
+      btn.addEventListener("click", action.onClick);
+      node.appendChild(document.createElement("br"));
+      node.appendChild(btn);
+    }
     show(node, true);
   }
 
@@ -449,12 +502,22 @@
       .then(function (data) {
         var items = data.products || [];
         if (!items.length) {
+          var filtering = q || state.category;
           emptyState(
             empty,
-            q || state.category ? "Nothing matches." : "Nothing listed yet.",
-            q || state.category
-              ? "Try a different search, or clear the category filter."
-              : "When shops add products they show up here, cheapest first."
+            filtering ? "Nothing matches." : "Nothing listed yet.",
+            filtering
+              ? "No shop has listed this. Post it as a request and they will quote you a price."
+              : "No shop has listed anything yet. You can still post what you need and wait for offers.",
+            state.user && state.user.role === "shop"
+              ? null
+              : {
+                  label: "Post what you need",
+                  onClick: function () {
+                    if (state.user) go("post");
+                    else openAuth(true);
+                  },
+                }
           );
           return;
         }
@@ -484,6 +547,16 @@
   /* ----------------------------------------------------------------- auth */
 
   var registering = false;
+
+  /* Open the account screen in a known mode, so a button elsewhere can send
+     someone to "create an account" rather than to a sign-in form they have
+     no credentials for. */
+  function openAuth(register) {
+    registering = !!register;
+    text($("#auth-msg"), "");
+    paintAuthMode();
+    go("auth");
+  }
 
   function paintAuthMode() {
     text($("#auth-title"), registering ? "Create an account" : "Sign in");
@@ -545,7 +618,13 @@
           emptyState(
             empty,
             "No requests yet.",
-            "Post one from the Post tab and nearby shops are emailed."
+            "Describe what you need and shops in your area are emailed straight away.",
+            {
+              label: "Post what you need",
+              onClick: function () {
+                go("post");
+              },
+            }
           );
           return;
         }
@@ -669,7 +748,13 @@
           emptyState(
             empty,
             "No offers sent.",
-            "Reply to an open request from the Requests tab to send your first."
+            "Students are waiting for prices. Answer one and it shows up here.",
+            {
+              label: "See open requests",
+              onClick: function () {
+                go("requests");
+              },
+            }
           );
           return;
         }
@@ -1062,6 +1147,7 @@
   if (!apiBase()) {
     show($("#no-api"), true);
     paintAuthMode();
+    paintBrowseIntro();
     paintTabs();
     return;
   }

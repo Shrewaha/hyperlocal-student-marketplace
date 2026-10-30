@@ -136,8 +136,19 @@
       <!-- ============================================================ browse -->
       <section id="view-browse">
         <div class="hero" id="browse-hero">
-          <h1>Shops come to you.</h1>
-          <p>Post what you need with your budget. Nearby shops reply with prices.</p>
+          <h1 id="browse-title">Shops come to you.</h1>
+          <p id="browse-sub">
+            Post what you need with your budget. Nearby shops reply with prices.
+          </p>
+          <!--
+            The copy above tells people to post. Without a control next to it
+            the only route was the Post tab, which exists for students only --
+            so a visitor, or anyone signed in as a shop, was told to do
+            something the interface gave them no way to do.
+          -->
+          <p style="margin-top: 0.9rem">
+            <button class="btn btn--primary" id="browse-cta" type="button"></button>
+          </p>
         </div>
         <div class="grid" id="products"></div>
         <div class="empty" id="products-empty" hidden></div>
