@@ -5,6 +5,10 @@ import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.webkit.GeolocationPermissions;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -32,7 +36,11 @@ public class MainActivity extends Activity {
     private static final String START_URL =
             "https://appassets.androidplatform.net/assets/web/index.html";
 
+    private static final int GEOLOCATION_REQUEST = 1;
+
     private WebView web;
+    private String pendingGeolocationOrigin;
+    private GeolocationPermissions.Callback pendingGeolocationCallback;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -62,6 +70,37 @@ public class MainActivity extends Activity {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, true);
         }
+
+        /*
+         * A page asking for a location inside a WebView is refused by default
+         * and told nothing, so the button would appear to do nothing at all.
+         * The request has to be passed on twice: once to Android for the app's
+         * own permission, and once back to the page.
+         */
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onGeolocationPermissionsShowPrompt(
+                    String origin, GeolocationPermissions.Callback callback) {
+                boolean granted = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED
+                        || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED;
+
+                if (granted) {
+                    // Only our own bundled pages ever run here, so there is no
+                    // third-party origin to weigh.
+                    callback.invoke(origin, true, false);
+                    return;
+                }
+
+                pendingGeolocationOrigin = origin;
+                pendingGeolocationCallback = callback;
+                requestPermissions(new String[]{
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                }, GEOLOCATION_REQUEST);
+            }
+        });
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -94,6 +133,29 @@ public class MainActivity extends Activity {
         } else {
             web.restoreState(savedInstanceState);
         }
+    }
+
+    /**
+     * Android has answered the permission prompt; tell the page, which has
+     * been waiting on a callback since it asked.
+     */
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                           int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != GEOLOCATION_REQUEST || pendingGeolocationCallback == null) {
+            return;
+        }
+        boolean granted = false;
+        for (int result : results) {
+            if (result == PackageManager.PERMISSION_GRANTED) {
+                granted = true;
+                break;
+            }
+        }
+        pendingGeolocationCallback.invoke(pendingGeolocationOrigin, granted, false);
+        pendingGeolocationCallback = null;
+        pendingGeolocationOrigin = null;
     }
 
     /** Keeps the current screen across a rotation instead of reloading. */

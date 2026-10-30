@@ -6,6 +6,26 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-30
+
+### Added
+
+- **A profile you can edit.** `PATCH /api/me`, and a form for it. Accounts
+  made before a field existed could never gain it, so adding a phone number
+  meant registering again under a new address.
+- **Shop address and location.** A pin captured from the device, a Directions
+  link into Maps on every offer that has one, and an About line.
+- **A notification feed.** A bell with a dot, and a screen listing offers,
+  messages and new local requests, each leading back to what it is about.
+  Opening the feed marks it read.
+- **Toasts.** Confirmations were a line of text under whichever form produced
+  them, which on a phone is often below the fold -- people pressed the button,
+  saw nothing move, and pressed again. Sending an offer previously said
+  nothing at all.
+- Geolocation bridged through the Android WebView, which refuses it by
+  default and tells the page nothing, so the button would have appeared dead
+  in the APK while working in a browser.
+
 ## [1.4.0] - 2026-10-30
 
 ### Fixed
@@ -135,7 +155,8 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.5.0
 [1.4.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.4.0
 [1.3.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.3.0
 [1.2.2]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.2

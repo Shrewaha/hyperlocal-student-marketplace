@@ -119,6 +119,21 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- A conversation is a request paired with one shop. Two shops answering the
 -- same request are two separate threads, and the student is whoever owns the
 -- request, so the pair alone identifies both sides.
+-- What has happened that someone should know about. Written at the moment
+-- the thing happens, so the feed is a record rather than a query that has to
+-- reconstruct history from offers, messages and requests every time.
+CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    kind       TEXT NOT NULL,          -- offer | message | request | welcome
+    title      TEXT NOT NULL,
+    body       TEXT,
+    request_id INTEGER,
+    shop_id    INTEGER,
+    read_at    DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS messages (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id INTEGER NOT NULL REFERENCES requests(id),
@@ -143,6 +158,7 @@ CREATE INDEX IF NOT EXISTS idx_offers_request  ON offers(request_id, price);
 CREATE INDEX IF NOT EXISTS idx_requests_student ON requests(student_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_products_shop   ON products(shop_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(request_id, shop_id, id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, id DESC);
 """
 
 
@@ -171,6 +187,10 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
         if "phone" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+        for col, decl in (("address", "TEXT"), ("lat", "REAL"), ("lng", "REAL"),
+                          ("about", "TEXT")):
+            if col not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (col, decl))
         pcols = [r["name"] for r in conn.execute("PRAGMA table_info(products)")]
         if "image" not in pcols:
             # The bytes themselves, not a path: the host's disk is wiped on
@@ -311,6 +331,28 @@ def count_shops_in_area(conn: sqlite3.Connection, area: Optional[str]) -> int:
     return int(row["n"]) if row else 0
 
 
+def notify(conn: sqlite3.Connection, user_id: int, kind: str, title: str,
+           body: Optional[str] = None, request_id: Optional[int] = None,
+           shop_id: Optional[int] = None) -> None:
+    """
+    Record something worth knowing about.
+
+    Written as the event happens rather than worked out later from offers,
+    messages and requests: a feed assembled on read would have to re-derive
+    history on every poll, and could not remember what you had already seen.
+    Never allowed to fail the thing that caused it -- an unrecorded
+    notification is a smaller problem than an offer that would not send.
+    """
+    try:
+        conn.execute(
+            "INSERT INTO notifications (user_id, kind, title, body, request_id, shop_id) "
+            "VALUES (?,?,?,?,?,?)",
+            (user_id, kind, title, body, request_id, shop_id),
+        )
+    except Exception as exc:                      # pragma: no cover
+        print("[notify] could not record %s for user %s: %s" % (kind, user_id, exc))
+
+
 def normalize_phone(value: Optional[str]) -> Optional[str]:
     """
     Keep the digits and a leading +, drop the spaces, dashes and brackets
@@ -365,6 +407,10 @@ def public_user(user: dict) -> dict:
         "role": user["role"], "area": user["area"],
         "shop_name": user["shop_name"],
         "phone": user.get("phone"),
+        "address": user.get("address"),
+        "lat": user.get("lat"),
+        "lng": user.get("lng"),
+        "about": user.get("about"),
         "notify_email": bool(user.get("notify_email", 1) in (1, None)),
     }
 
@@ -383,6 +429,26 @@ class RegisterIn(BaseModel):
     # Shops only. It is shown to a student on that shop's offers, which is
     # how the two actually reach each other once a price is agreed.
     phone: Optional[str] = Field(default=None, max_length=32)
+
+
+class ProfileIn(BaseModel):
+    """
+    Editing a profile, which is not the same shape as creating one. Every
+    field is optional because the client sends only what changed, and None
+    means "leave this alone" rather than "clear it" -- clearing is done by
+    sending an empty string.
+    """
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    area: Optional[str] = Field(default=None, max_length=120)
+    shop_name: Optional[str] = Field(default=None, max_length=160)
+    phone: Optional[str] = Field(default=None, max_length=32)
+    address: Optional[str] = Field(default=None, max_length=400)
+    about: Optional[str] = Field(default=None, max_length=600)
+    lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    lng: Optional[float] = Field(default=None, ge=-180, le=180)
+    # Removing a pin cannot be expressed by leaving lat and lng out, because
+    # absent means untouched. It needs saying outright.
+    clear_location: bool = False
 
 
 class MessageIn(BaseModel):
@@ -494,6 +560,63 @@ def me(user: dict = Depends(get_current_user)):
     return public_user(user)
 
 
+@app.patch("/api/me", tags=["auth"])
+def update_me(data: ProfileIn,
+              conn: sqlite3.Connection = Depends(get_db),
+              user: dict = Depends(get_current_user)):
+    """
+    Complete or correct a profile.
+
+    Accounts created before a field existed had no way to gain it, so adding a
+    phone number meant registering again under a new address. Only the fields
+    actually sent are touched, which keeps a form that edits one thing from
+    silently blanking the rest.
+    """
+    sets, params = [], []
+
+    def put(column, value):
+        sets.append("%s = ?" % column)
+        params.append(value)
+
+    if data.name is not None:
+        name = data.name.strip()
+        if not name:
+            raise HTTPException(400, "Name cannot be empty")
+        put("name", name)
+    if data.area is not None:
+        put("area", normalize_area(data.area))
+    if data.phone is not None:
+        put("phone", normalize_phone(data.phone))
+    if data.address is not None:
+        put("address", data.address.strip() or None)
+    if data.about is not None:
+        put("about", data.about.strip() or None)
+    if data.clear_location:
+        put("lat", None)
+        put("lng", None)
+    else:
+        if data.lat is not None:
+            put("lat", data.lat)
+        if data.lng is not None:
+            put("lng", data.lng)
+    if data.shop_name is not None:
+        if user["role"] != "shop":
+            raise HTTPException(400, "Only a shop has a shop name")
+        shop_name = data.shop_name.strip()
+        if not shop_name:
+            raise HTTPException(400, "Shop name cannot be empty")
+        put("shop_name", shop_name)
+
+    if not sets:
+        return public_user(user)
+
+    params.append(user["id"])
+    conn.execute("UPDATE users SET " + ", ".join(sets) + " WHERE id = ?", params)
+    conn.commit()
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+    return public_user(dict(row))
+
+
 @app.get("/api/categories", tags=["catalog"])
 def categories():
     return {"categories": CATEGORIES}
@@ -559,6 +682,19 @@ def create_request(data: RequestIn, background: BackgroundTasks,
          data.specs, data.budget),
     )
     request_id = cur.lastrowid
+
+    key = area_key(user["area"])
+    if key:
+        shops = conn.execute(
+            "SELECT id FROM users WHERE role = 'shop' "
+            "AND TRIM(LOWER(COALESCE(area,''))) = ? LIMIT 50", (key,)
+        ).fetchall()
+        for shop in shops:
+            notify(
+                conn, shop["id"], "request",
+                "New request in %s" % (user["area"] or "your area"),
+                data.title.strip(), request_id=request_id,
+            )
     conn.commit()
 
     background.add_task(emailer.notify_new_request, request_id)
@@ -624,7 +760,8 @@ def request_offers(request_id: int,
     # to a separate lookup for a phone number is where that stalls.
     rows = conn.execute(
         "SELECT o.*, u.id AS shop_user_id, u.shop_name, u.name AS shop_contact, "
-        "       u.area, u.phone, u.email AS shop_email "
+        "       u.area, u.phone, u.email AS shop_email, "
+        "       u.address, u.lat, u.lng "
         "FROM offers o JOIN users u ON u.id = o.shop_id "
         "WHERE o.request_id = ? ORDER BY o.price ASC, o.id ASC",
         (request_id,)
@@ -641,6 +778,9 @@ def request_offers(request_id: int,
             "shop_contact": r["shop_contact"],
             "phone": r["phone"],
             "email": r["shop_email"],
+            "address": r["address"],
+            "lat": r["lat"],
+            "lng": r["lng"],
             "area": r["area"],
             "product_name": r["product_name"],
             "specs": r["specs"],
@@ -758,6 +898,13 @@ def create_offer(data: OfferIn, background: BackgroundTasks,
          data.price, data.note),
     )
     offer_id = cur.lastrowid
+    notify(
+        conn, req["student_id"], "offer",
+        "%s offered %s" % (user["shop_name"] or user["name"],
+                           ("\u20b9%g" % data.price)),
+        data.product_name.strip(),
+        request_id=data.request_id, shop_id=user["id"],
+    )
     conn.commit()                       # commit BEFORE queueing the email
 
     background.add_task(emailer.notify_new_offer, offer_id)
@@ -781,6 +928,48 @@ def my_offers(conn: sqlite3.Connection = Depends(get_db),
                         and float(d["price"]) <= float(d["best_price"]) + 1e-9)
         offers.append(d)
     return {"offers": offers}
+
+
+# ==========================================================================
+# Notifications
+# ==========================================================================
+
+
+@app.get("/api/notifications", tags=["notifications"])
+def list_notifications(limit: int = Query(30, le=100),
+                       conn: sqlite3.Connection = Depends(get_db),
+                       user: dict = Depends(get_current_user)):
+    """My feed, newest first, with how many I have not seen."""
+    rows = conn.execute(
+        "SELECT id, kind, title, body, request_id, shop_id, read_at, created_at "
+        "FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+        (user["id"], limit)
+    ).fetchall()
+    unread = conn.execute(
+        "SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL",
+        (user["id"],)
+    ).fetchone()["n"]
+    return {
+        "notifications": [{
+            "id": r["id"], "kind": r["kind"], "title": r["title"],
+            "body": r["body"], "request_id": r["request_id"],
+            "shop_id": r["shop_id"], "created_at": r["created_at"],
+            "read": r["read_at"] is not None,
+        } for r in rows],
+        "unread": unread,
+    }
+
+
+@app.post("/api/notifications/read", tags=["notifications"])
+def mark_notifications_read(conn: sqlite3.Connection = Depends(get_db),
+                            user: dict = Depends(get_current_user)):
+    """Mark the lot as seen. Opening the feed is the act of reading it."""
+    conn.execute(
+        "UPDATE notifications SET read_at = CURRENT_TIMESTAMP "
+        "WHERE user_id = ? AND read_at IS NULL", (user["id"],)
+    )
+    conn.commit()
+    return {"ok": True}
 
 
 # ==========================================================================
@@ -927,6 +1116,13 @@ def send_message(data: MessageIn,
     cur = conn.execute(
         "INSERT INTO messages (request_id, shop_id, sender_id, body) VALUES (?,?,?,?)",
         (data.request_id, shop_id, user["id"], data.body.strip()),
+    )
+    other_id = shop if user["id"] == student_id else student_id
+    notify(
+        conn, other_id, "message",
+        "New message from %s" % (user["shop_name"] or user["name"]),
+        data.body.strip()[:120],
+        request_id=data.request_id, shop_id=shop_id,
     )
     # Your own message is not something you have to come back and read.
     conn.execute(
