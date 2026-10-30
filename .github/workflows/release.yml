@@ -21,8 +21,15 @@ on:
   push:
     tags:
       - "v*"
-  # Lets you test the build from the Actions tab without cutting a release.
+  # Lets you rebuild the downloads from the Actions tab, without moving tags
+  # around. Useful when a release exists but its files are missing or need
+  # replacing: give it the tag and it attaches the results to that release.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach the builds to (e.g. v1.0.0). Leave blank to build without publishing."
+        required: false
+        default: ""
 
 permissions:
   contents: write # required to create the release and upload files to it
@@ -105,11 +112,18 @@ jobs:
         shell: bash
         run: |
           # jpackage demands a version starting with a digit, so the leading
-          # "v" comes off. A manual run has no tag, so it gets a placeholder.
+          # "v" comes off. A tag push takes its version from the tag; a manual
+          # run takes it from the tag typed into the form, and falls back to a
+          # placeholder when that was left blank.
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "number=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            raw="${GITHUB_REF_NAME}"
           else
+            raw="${{ inputs.tag }}"
+          fi
+          if [ -z "$raw" ]; then
             echo "number=0.0.0" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${raw#v}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build the app image
@@ -169,7 +183,9 @@ jobs:
     # always() keeps this job alive when a bundle fails, so one broken platform
     # costs you that one download instead of the entire release. The jar is the
     # only hard requirement -- without it there is nothing worth publishing.
-    if: always() && needs.jar.result == 'success' && startsWith(github.ref, 'refs/tags/')
+    if: >-
+      always() && needs.jar.result == 'success'
+      && (startsWith(github.ref, 'refs/tags/') || inputs.tag != '')
     runs-on: ubuntu-latest
     steps:
       - name: Collect every build
@@ -190,6 +206,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
+          # On a tag push this is the tag that triggered the run. On a manual
+          # run it is the tag typed into the form, which is what lets you
+          # repair an existing release without re-tagging anything.
+          tag_name: ${{ inputs.tag || github.ref_name }}
           # draft was true when this workflow expected to create the release
           # itself. The release is now made first, by hand or by the tag, so
           # drafting here would unpublish a live page. This step only attaches
