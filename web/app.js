@@ -104,45 +104,66 @@
       }
     }, 2500);
 
-    return fetch(base + path, {
-      method: options.method || "GET",
-      headers: headers,
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    })
-      .then(function (res) {
-        return res
-          .json()
-          .catch(function () {
-            return {};
-          })
-          .then(function (data) {
-            if (!res.ok) {
-              var detail = data && data.detail;
-              if (Array.isArray(detail)) {
-                detail = detail
-                  .map(function (d) {
-                    return d.msg || "";
-                  })
-                  .join(", ");
-              }
-              throw new Error(detail || "Request failed (" + res.status + ")");
-            }
-            return data;
-          });
+    var method = options.method || "GET";
+
+    /*
+     * A sleeping instance drops the connection on the request that wakes it,
+     * and anything else in flight alongside it. fetch rejects with a
+     * TypeError for that, which is indistinguishable from a real outage on
+     * one try -- so a read is simply tried again before giving up.
+     *
+     * Only reads. Retrying a POST could send the same offer twice, and a
+     * duplicate offer is worse than an error message.
+     */
+    var retries = method === "GET" ? 2 : 0;
+
+    function attempt(left) {
+      return fetch(base + path, {
+        method: method,
+        headers: headers,
+        body: options.body ? JSON.stringify(options.body) : undefined,
       })
-      .catch(function (err) {
-        if (err instanceof TypeError) {
+        .then(function (res) {
+          return res
+            .json()
+            .catch(function () {
+              return {};
+            })
+            .then(function (data) {
+              if (!res.ok) {
+                var detail = data && data.detail;
+                if (Array.isArray(detail)) {
+                  detail = detail
+                    .map(function (d) {
+                      return d.msg || "";
+                    })
+                    .join(", ");
+                }
+                throw new Error(detail || "Request failed (" + res.status + ")");
+              }
+              return data;
+            });
+        })
+        .catch(function (err) {
+          if (!(err instanceof TypeError)) throw err;
+          if (left > 0) {
+            return new Promise(function (resolve) {
+              setTimeout(resolve, 1500);
+            }).then(function () {
+              return attempt(left - 1);
+            });
+          }
           throw new Error(
             "Could not reach the server at " + base + ". Check the address, and that it is running."
           );
-        }
-        throw err;
-      })
-      .finally(function () {
-        clearTimeout(slowTimer);
-        var note = $("#waking");
-        if (note) note.remove();
-      });
+        });
+    }
+
+    return attempt(retries).finally(function () {
+      clearTimeout(slowTimer);
+      var note = $("#waking");
+      if (note) note.remove();
+    });
   }
 
   /* ----------------------------------------------------------- navigation */
@@ -159,9 +180,13 @@
     if (name === "browse") loadProducts();
     if (name === "student") loadMyRequests();
     if (name === "shop") {
-      loadOpenRequests();
-      loadMyOffers();
-      loadMyProducts();
+      /* One at a time. Three parallel requests at an instance that is still
+         waking gets some of them dropped, and the screen fills with errors
+         for what is really just a cold start. */
+      loadOpenRequests()
+        .then(loadMyOffers)
+        .then(loadMyProducts)
+        .catch(function () {});
     }
   }
 
@@ -368,7 +393,7 @@
     var empty = $("#open-requests-empty");
     list.textContent = "";
 
-    request("/api/requests/open?my_area_only=" + (state.myAreaOnly ? "true" : "false"))
+    return request("/api/requests/open?my_area_only=" + (state.myAreaOnly ? "true" : "false"))
       .then(function (data) {
         var items = data.requests || [];
         show(empty, items.length === 0);
@@ -425,7 +450,7 @@
     var empty = $("#my-offers-empty");
     list.textContent = "";
 
-    request("/api/offers/mine")
+    return request("/api/offers/mine")
       .then(function (data) {
         var items = data.offers || [];
         show(empty, items.length === 0);
@@ -470,7 +495,7 @@
   function loadMyProducts() {
     var list = $("#my-products");
     list.textContent = "";
-    request("/api/products/mine")
+    return request("/api/products/mine")
       .then(function (data) {
         (data.products || []).forEach(function (p) {
           var li = el("li");
@@ -757,8 +782,9 @@
       },
     }).then(
       function () {
-        loadOpenRequests();
-        loadMyOffers();
+        loadOpenRequests()
+          .then(loadMyOffers)
+          .catch(function () {});
       },
       function (err) {
         window.alert(err.message);
