@@ -6,6 +6,16 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-30
+
+### Fixed
+
+- **Updating the Android app left the old interface on screen.** The bundled
+  pages are served from one fixed address that never changes between
+  versions, so nothing told the WebView its CSS and JavaScript had been
+  replaced, and it kept serving the previous release from cache. The app now
+  clears that cache the first time a new build runs.
+
 ## [1.2.0] - 2026-10-30
 
 ### Changed
@@ -81,7 +91,8 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.1
 [1.2.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.0
 [1.1.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.1.0
 [1.0.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.0.0
