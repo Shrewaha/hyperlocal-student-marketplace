@@ -1,0 +1,43 @@
+# Deploy the backend to Render (https://render.com) on the free plan.
+#
+# Render reads this file when you create a Blueprint from the repository, so
+# there is nothing to configure in their dashboard:
+#
+#   New  ->  Blueprint  ->  pick this repo  ->  Apply
+#
+# You get a URL like https://marketplace-api-xxxx.onrender.com. Put that into
+# web/config.js so the browser client talks to it.
+#
+# Two things about the free plan worth knowing before you share the link:
+#
+#   * The service sleeps after about 15 minutes with no traffic, and the next
+#     request takes 30-60 seconds while it wakes. Nothing is broken; it is
+#     just cold.
+#   * The disk is wiped on every restart and redeploy. marketplace.db goes
+#     with it, so accounts and offers are demo data, not permanent records.
+#     Moving to Postgres is what fixes that, and it is a backend change rather
+#     than a hosting one.
+
+services:
+  - type: web
+    name: marketplace-api
+    runtime: python
+    plan: free
+    region: singapore # closest Render region to India; frankfurt/oregon also exist
+    buildCommand: pip install -r requirements.txt
+    # $PORT is assigned by Render at boot, and binding to 0.0.0.0 rather than
+    # localhost is what makes the service reachable from outside the container.
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      # Print emails to the service log instead of sending them. Flip this to
+      # false and fill in the SMTP values in the Render dashboard once you have
+      # an App Password you are willing to put there.
+      - key: EMAIL_CONSOLE_ONLY
+        value: "true"
+      - key: EMAIL_ENABLED
+        value: "true"
+      - key: APP_NAME
+        value: HyperLocal Student Marketplace
+      - key: PYTHON_VERSION
+        value: "3.12"

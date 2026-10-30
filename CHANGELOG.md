@@ -6,6 +6,23 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Browser client** (`web/`) against the same JSON API as the desktop app:
+  public product search, accounts, requests, offers and the comparison table.
+  No framework and no build step. The API address comes from `web/config.js`,
+  or from a box in the page header that stores it in your own browser.
+- **`pages.yml`** publishes the browser client to GitHub Pages.
+- **`render.yaml` and `Dockerfile`** for deploying the backend.
+
+### Fixed
+
+- The release workflow asked for the retired `macos-13` runner, which queues
+  forever instead of failing, so `v1.0.0` was published with no files attached.
+  Publishing now needs only the jar and carries on when a platform fails.
+- A manual run can attach builds to an existing release, so a release missing
+  its files can be repaired without moving tags.
+
 ## [1.0.0] - 2026-10-29
 
 First release. The marketplace works end to end: a student posts what they

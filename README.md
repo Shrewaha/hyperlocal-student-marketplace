@@ -10,7 +10,10 @@ budget — and nearby shops compete by sending offers. The student gets one
 comparison table with the best price flagged, and an email the moment a new
 offer lands.
 
-Built as a FastAPI JSON backend with a JavaFX desktop client.
+Built as a FastAPI JSON backend with two clients against the same API: a
+JavaFX desktop app and a browser app.
+
+**Try it:** [shrewaha.github.io/hyperlocal-student-marketplace](https://shrewaha.github.io/hyperlocal-student-marketplace/)
 
 ---
 
@@ -92,7 +95,8 @@ writes a `failed` row to the email log.
 |---|---|---|
 | Backend | Python, FastAPI | Automatic OpenAPI docs at `/docs`, async-friendly, tiny |
 | Database | SQLite | One file, zero setup, enough for a campus-scale app |
-| Frontend | Java, JavaFX | Desktop client, single file, no build tool required |
+| Desktop client | Java, JavaFX | Single file, runs from an IDE or as a packaged download |
+| Web client | Plain HTML, CSS, JS | No framework and no build step, so it loads fast on a phone |
 | API | Pure JSON REST | No templates, so a web or Android client can be added later |
 | Auth | Bearer tokens in a `sessions` table | Simple to reason about and to revoke |
 | Email | stdlib `smtplib` | No third-party dependency, works with any SMTP provider |
@@ -253,9 +257,17 @@ hyperlocal-student-marketplace/
 │   ├── Launcher.java         entry point for the packaged build only
 │   ├── pom.xml               optional Maven build, produces the release jar
 │   └── lib/                  put json-20231013.jar here
+├── web/
+│   ├── index.html         browser client, same API as the desktop app
+│   ├── app.js             no framework, no build step
+│   ├── styles.css
+│   └── config.js          put your deployed API URL here
 ├── .github/workflows/
 │   ├── tests.yml          backend checks on every push
-│   └── release.yml        builds and publishes downloads on a v* tag
+│   ├── release.yml        builds and publishes downloads on a v* tag
+│   └── pages.yml          publishes web/ to GitHub Pages
+├── render.yaml            one-click backend deploy
+├── Dockerfile             backend anywhere else
 ├── docs/
 │   └── EMAIL.md
 ├── CHANGELOG.md
@@ -279,6 +291,38 @@ Five tables plus a delivery log. Created automatically on first run.
 
 Passwords are stored as `pbkdf2_sha256$iterations$salt$hash`, with a random
 per-user salt and 240,000 iterations, verified in constant time.
+
+---
+
+## Running it on the internet
+
+The browser client is static and the API is a single Python service, so the
+two halves are hosted separately.
+
+### Backend
+
+[`render.yaml`](render.yaml) describes the service, so Render needs no
+configuration beyond pointing it at the repo: **New → Blueprint → pick this
+repo → Apply**. You get a URL like `https://marketplace-api-xxxx.onrender.com`.
+[`Dockerfile`](Dockerfile) covers anywhere else that takes a container.
+
+Two things about free hosting, both worth knowing before sharing the link:
+the service sleeps after ~15 minutes idle and takes up to a minute to wake,
+and its disk is wiped on every restart, so `marketplace.db` goes with it.
+Accounts and offers are demo data until the database moves to Postgres.
+
+### Frontend
+
+Put the API URL into [`web/config.js`](web/config.js) and push. The `pages`
+workflow publishes `web/` on every change.
+
+This needs one setting changed by hand, once: **Settings → Pages → Build and
+deployment → Source: GitHub Actions**. Until then Pages keeps rendering the
+README instead.
+
+You can also skip `config.js` entirely and use the **Server** button in the
+page header, which stores an address in your own browser. That is the quickest
+way to try the web client against a backend running locally on port 8000.
 
 ---
 

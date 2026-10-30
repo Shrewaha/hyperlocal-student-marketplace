@@ -1,0 +1,65 @@
+# Publishes web/ to GitHub Pages, which is the live link.
+#
+# One setting has to be changed by hand before this works:
+#
+#   Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+#
+# Until that is switched, Pages keeps building from a branch with Jekyll and
+# this workflow's deploy step fails. Switching it replaces the rendered README
+# at the Pages URL with the app itself.
+#
+# Nothing is compiled: web/ is plain HTML, CSS and JS, uploaded as it stands.
+
+name: pages
+
+on:
+  push:
+    branches: [main]
+    # Only rebuild when the site actually changes.
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it, so the live site is
+# never left half-updated.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Fail early if the API address was never set
+        # A deployed page with an empty config.js still loads and explains
+        # itself, so this is a warning rather than an error -- but it should
+        # be visible in the log rather than discovered by a confused visitor.
+        run: |
+          if grep -q 'MARKETPLACE_API = ""' web/config.js; then
+            echo "::warning file=web/config.js::No API URL set. The site will load and ask the visitor for one. Set it in web/config.js once the backend is deployed."
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@v4
