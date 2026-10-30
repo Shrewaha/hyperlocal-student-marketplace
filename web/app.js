@@ -6,9 +6,12 @@
  * written, which keeps it quick on a phone and a student's data plan, and
  * lets the APK bundle it unchanged.
  *
- * The token lives in sessionStorage, so closing the tab signs you out. Every
- * storage read and write is guarded, because storage throws outright in a
- * private window rather than politely returning nothing.
+ * The sign-in token is kept in localStorage so that reopening the app finds
+ * you still signed in. sessionStorage would be wiped whenever Android
+ * reclaims the WebView's process, and because the tabs are built from the
+ * signed-in role, that looked like Chats and Post had gone missing rather
+ * than like a logout. Every storage read and write is guarded, because
+ * storage throws outright in a private window rather than returning nothing.
  */
 
 (function () {
@@ -39,7 +42,7 @@
 
   var state = {
     user: null,
-    token: store(sessionStorage, TOKEN_KEY) || null,
+    token: store(localStorage, TOKEN_KEY) || null,
     categories: [],
     areas: [],
     unread: 0,
@@ -113,12 +116,69 @@
     return CATEGORY_LOOK[category] || CATEGORY_LOOK.Other;
   }
 
-  function artBlock(category, className) {
-    var l = look(category);
+  function artBlock(category, className, product) {
     var box = el("div", className);
+
+    /* A real photograph takes the place the category block would have had,
+       and fills it the same way, so a card with a picture and one without
+       are the same shape and the grid stays even. */
+    if (product && product.has_image) {
+      var img = document.createElement("img");
+      img.src = apiBase() + "/api/products/" + product.id + "/image";
+      img.alt = "";
+      img.loading = "lazy";
+      /* A photo that will not load should leave the category block behind
+         rather than a broken-image icon. */
+      img.addEventListener("error", function () {
+        box.textContent = "";
+        var l = look(category);
+        box.style.setProperty("--cat", l.color);
+        box.appendChild(icon(l.glyph));
+      });
+      box.appendChild(img);
+      return box;
+    }
+
+    var l = look(category);
     box.style.setProperty("--cat", l.color);
     box.appendChild(icon(l.glyph));
     return box;
+  }
+
+  /*
+   * Shrink a picture before it is uploaded.
+   *
+   * A phone camera produces three or four megabytes. Sending that over a
+   * student's data plan to a free host, so it can be shown in a card two
+   * hundred pixels wide, is wasteful at both ends -- and slow enough that
+   * people assume the upload has failed. The longest edge is capped and the
+   * result re-encoded as JPEG, which brings it to roughly a tenth.
+   */
+  function shrinkImage(file, maxEdge, quality) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+        var w = Math.round(img.width * scale);
+        var h = Math.round(img.height * scale);
+        var canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        try {
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        } catch (e) {
+          reject(new Error("That image could not be read."));
+        }
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        reject(new Error("That file is not an image this browser can open."));
+      };
+      img.src = url;
+    });
   }
 
   /* --------------------------------------------------------------- fetch */
@@ -535,7 +595,7 @@
         }
         items.forEach(function (p) {
           var card = el("article", "tile");
-          var art = artBlock(p.category, "tile__art");
+          var art = artBlock(p.category, "tile__art", p);
           if (p.stock === 0) art.appendChild(el("span", "tile__badge", "OUT OF STOCK"));
           card.appendChild(art);
 
@@ -591,7 +651,7 @@
   function afterSignIn(data) {
     state.token = data.token;
     state.user = data.user;
-    store(sessionStorage, TOKEN_KEY, data.token);
+    store(localStorage, TOKEN_KEY, data.token);
     go("home");
     refreshUnread(true);
   }
@@ -612,7 +672,7 @@
       })
       .catch(function () {
         state.token = null;
-        store(sessionStorage, TOKEN_KEY, null);
+        store(localStorage, TOKEN_KEY, null);
       });
   }
 
@@ -808,7 +868,7 @@
       .then(function (data) {
         (data.products || []).forEach(function (p) {
           var card = el("article", "tile");
-          card.appendChild(artBlock(p.category, "tile__art"));
+          card.appendChild(artBlock(p.category, "tile__art", p));
           var body = el("div", "tile__body");
           body.appendChild(el("h3", "tile__name", p.name));
           body.appendChild(el("span", "tile__meta", "stock " + p.stock));
@@ -1112,7 +1172,7 @@
     state.user = null;
     state.unread = 0;
     state.thread = null;
-    store(sessionStorage, TOKEN_KEY, null);
+    store(localStorage, TOKEN_KEY, null);
     go("browse");
   });
 
@@ -1252,6 +1312,34 @@
     );
   });
 
+  var pendingImage = null;
+
+  $("#product-form").elements.image.addEventListener("change", function (e) {
+    var hint = $("#image-hint");
+    var file = e.target.files && e.target.files[0];
+    pendingImage = null;
+    show($("#image-preview"), false);
+    hint.className = "hint-line";
+    hint.textContent = "";
+    if (!file) return;
+
+    hint.textContent = "Preparing\u2026";
+    shrinkImage(file, 900, 0.72).then(
+      function (dataUrl) {
+        pendingImage = dataUrl;
+        $("#image-preview-img").src = dataUrl;
+        show($("#image-preview"), true);
+        var kb = Math.round((dataUrl.length * 3) / 4 / 1024);
+        hint.className = "hint-line hint-line--ok";
+        hint.textContent = "Ready, about " + kb + " KB after resizing.";
+      },
+      function (err) {
+        hint.className = "hint-line hint-line--warn";
+        hint.textContent = err.message;
+      }
+    );
+  });
+
   $("#product-form").addEventListener("submit", function (e) {
     e.preventDefault();
     var f = e.target.elements;
@@ -1267,10 +1355,14 @@
         specs: f.specs.value.trim() || null,
         price: Number(f.price.value),
         stock: Number(f.stock.value || 1),
+        image: pendingImage,
       },
     }).then(
       function () {
         e.target.reset();
+        pendingImage = null;
+        show($("#image-preview"), false);
+        text($("#image-hint"), "");
         msg.className = "msg msg--ok";
         text(msg, "Listed.");
         loadMyProducts();

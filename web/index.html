@@ -336,6 +336,14 @@
                 <span>Specs</span>
                 <input name="specs" maxlength="1000" />
               </label>
+              <label class="field">
+                <span>Photo (optional)</span>
+                <input name="image" type="file" accept="image/*" />
+                <small class="hint-line" id="image-hint"></small>
+              </label>
+              <div id="image-preview" hidden>
+                <img alt="" id="image-preview-img" class="preview" />
+              </div>
               <button class="btn btn--primary btn--block" type="submit">Add listing</button>
               <p class="msg" id="product-msg"></p>
             </form>
