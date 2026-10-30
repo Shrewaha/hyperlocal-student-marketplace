@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS users (
     role       TEXT NOT NULL CHECK(role IN ('student','shop')),
     area       TEXT,
     shop_name  TEXT,
+    avatar     BLOB,
+    avatar_type TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -188,7 +190,8 @@ def init_db():
         if "phone" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
         for col, decl in (("address", "TEXT"), ("lat", "REAL"), ("lng", "REAL"),
-                          ("about", "TEXT")):
+                          ("about", "TEXT"), ("avatar", "BLOB"),
+                          ("avatar_type", "TEXT")):
             if col not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (col, decl))
         pcols = [r["name"] for r in conn.execute("PRAGMA table_info(products)")]
@@ -411,6 +414,7 @@ def public_user(user: dict) -> dict:
         "lat": user.get("lat"),
         "lng": user.get("lng"),
         "about": user.get("about"),
+        "has_avatar": user.get("avatar") is not None,
         "notify_email": bool(user.get("notify_email", 1) in (1, None)),
     }
 
@@ -449,6 +453,9 @@ class ProfileIn(BaseModel):
     # Removing a pin cannot be expressed by leaving lat and lng out, because
     # absent means untouched. It needs saying outright.
     clear_location: bool = False
+    # A data URL, already shrunk by the browser. Same reasoning as a product
+    # photograph; an avatar is smaller again.
+    avatar: Optional[str] = Field(default=None, max_length=3_000_000)
 
 
 class MessageIn(BaseModel):
@@ -599,6 +606,16 @@ def update_me(data: ProfileIn,
             put("lat", data.lat)
         if data.lng is not None:
             put("lng", data.lng)
+    if data.avatar is not None:
+        if data.avatar.strip():
+            blob, media = decode_data_url(data.avatar)
+            put("avatar", blob)
+            put("avatar_type", media)
+        else:
+            # An empty string is how a picture is removed, the same way an
+            # empty address clears an address.
+            put("avatar", None)
+            put("avatar_type", None)
     if data.shop_name is not None:
         if user["role"] != "shop":
             raise HTTPException(400, "Only a shop has a shop name")
@@ -859,6 +876,83 @@ def browse_products(q: Optional[str] = None, category: Optional[str] = None,
 
     rows = conn.execute(sql, params).fetchall()
     return {"products": [dict(r) for r in rows]}
+
+
+@app.get("/api/users/{user_id}/avatar", tags=["catalog"])
+def user_avatar(user_id: int, conn: sqlite3.Connection = Depends(get_db)):
+    """
+    Someone's picture. Public, because it appears beside their offers and
+    messages to people who may not be signed in, and on its own URL so the
+    browser caches it rather than refetching it for every card.
+    """
+    row = conn.execute(
+        "SELECT avatar, avatar_type FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    if row is None or row["avatar"] is None:
+        raise HTTPException(404, "No picture for that account")
+    return Response(
+        content=row["avatar"],
+        media_type=row["avatar_type"] or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.get("/api/shops/{shop_id}", tags=["catalog"])
+def shop_page(shop_id: int, conn: sqlite3.Connection = Depends(get_db)):
+    """
+    A shop's public page: who they are, where they are, and everything they
+    have listed.
+
+    No account needed. A student comparing offers should be able to look at
+    who is quoting them before deciding, and that is exactly the moment they
+    are least likely to want a sign-in wall.
+
+    Only the fields a shop has chosen to publish are here; the email address
+    is not among them, since it reaches the student through an offer rather
+    than through a page anyone can open.
+    """
+    row = conn.execute(
+        "SELECT id, name, shop_name, area, about, address, lat, lng, phone, "
+        "       (avatar IS NOT NULL) AS has_avatar, created_at "
+        "FROM users WHERE id = ? AND role = 'shop'", (shop_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "No such shop")
+
+    products = conn.execute(
+        "SELECT id, name, category, specs, price, stock, "
+        "       (image IS NOT NULL) AS has_image "
+        "FROM products WHERE shop_id = ? ORDER BY price ASC", (shop_id,)
+    ).fetchall()
+
+    stats = conn.execute(
+        "SELECT COUNT(*) AS offers, "
+        "       SUM(CASE WHEN o.price <= ("
+        "           SELECT MIN(x.price) FROM offers x WHERE x.request_id = o.request_id"
+        "       ) THEN 1 ELSE 0 END) AS cheapest "
+        "FROM offers o WHERE o.shop_id = ?", (shop_id,)
+    ).fetchone()
+
+    return {
+        "shop": {
+            "id": row["id"],
+            "name": row["shop_name"] or row["name"],
+            "contact": row["name"],
+            "area": row["area"],
+            "about": row["about"],
+            "address": row["address"],
+            "lat": row["lat"],
+            "lng": row["lng"],
+            "phone": row["phone"],
+            "has_avatar": bool(row["has_avatar"]),
+            "since": row["created_at"],
+        },
+        # How often this shop has been the cheapest answer, which is the one
+        # thing a student actually wants to know about a stranger's prices.
+        "offers": stats["offers"] or 0,
+        "cheapest": stats["cheapest"] or 0,
+        "products": [dict(p) for p in products],
+    }
 
 
 @app.get("/api/products/{product_id}/image", tags=["catalog"])
