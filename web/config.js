@@ -16,4 +16,4 @@
  * browsers block it as mixed content. Local development works because
  * localhost is exempt.
  */
-window.MARKETPLACE_API = "";
+window.MARKETPLACE_API = "https://marketplace-api-a3nq.onrender.com";
