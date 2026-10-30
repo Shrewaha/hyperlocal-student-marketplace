@@ -316,6 +316,21 @@ textarea::placeholder {
   opacity: 0.7;
 }
 
+/* Live feedback under the area box: how many shops already cover it. */
+.hint-line {
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+  min-height: 1.2em; /* reserved, so typing does not nudge the form around */
+}
+
+.hint-line--warn {
+  color: var(--marigold);
+}
+
+.hint-line--ok {
+  color: var(--best);
+}
+
 .row {
   display: grid;
   gap: 0.85rem;
@@ -549,6 +564,10 @@ legend {
 
 .msg--ok {
   color: var(--best);
+}
+
+.msg--warn {
+  color: var(--marigold);
 }
 
 /* --------------------------------------------------------------- waking */

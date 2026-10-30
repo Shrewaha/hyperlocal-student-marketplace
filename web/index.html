@@ -84,7 +84,7 @@
               </label>
               <label class="field">
                 <span>Area</span>
-                <input name="area" placeholder="Civil Lines" />
+                <input name="area" placeholder="Civil Lines" list="known-areas" />
               </label>
             </form>
             <div class="actions">
@@ -133,7 +133,13 @@
                 <div class="row">
                   <label class="field">
                     <span>Area</span>
-                    <input name="area" placeholder="Civil Lines" autocomplete="address-level3" />
+                    <input
+                      name="area"
+                      placeholder="Civil Lines"
+                      autocomplete="address-level3"
+                      list="known-areas"
+                    />
+                    <small class="hint-line" id="area-hint"></small>
                   </label>
                   <label class="field" id="shop-name-field" hidden>
                     <span>Shop name</span>
@@ -372,6 +378,14 @@
         >
       </p>
     </footer>
+
+    <!--
+      Areas already in use, filled in from /api/areas. Both area boxes point
+      at this, so people pick a spelling that already exists instead of
+      inventing one that matches nobody. A datalist suggests without
+      restricting, which matters for whoever registers in a new area first.
+    -->
+    <datalist id="known-areas"></datalist>
 
     <script src="config.js"></script>
     <script src="app.js"></script>

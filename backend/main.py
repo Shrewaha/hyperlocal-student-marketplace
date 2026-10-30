@@ -215,6 +215,62 @@ def require_shop(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+def normalize_area(value: Optional[str]) -> Optional[str]:
+    """
+    Tidy an area name for storage, keeping the capitalisation as typed.
+
+    Area is the key that decides which shops hear about a student's request,
+    and it arrives as free text. "Civil  Lines" and "Civil Lines " are the
+    same place to a person and were two different places to the database, so
+    a student could post a request that no shop ever saw and get no hint why.
+    Collapsing the whitespace here means the lowercase comparison used for
+    matching lines up for everything but a genuine misspelling -- and the
+    /api/areas list exists so people pick an existing spelling instead of
+    inventing one.
+    """
+    if value is None:
+        return None
+    cleaned = " ".join(value.split())
+    return cleaned or None
+
+
+def area_key(value: Optional[str]) -> str:
+    """The comparison form: what two areas have to share to count as one."""
+    return (normalize_area(value) or "").lower()
+
+
+def canonical_area(conn: sqlite3.Connection, area: Optional[str]) -> Optional[str]:
+    """
+    The established spelling of an area, for showing back to the user.
+
+    Someone who typed "civil lines" should still read "Civil Lines" in the
+    confirmation, because that is the name the place goes by here. Shops are
+    weighted first: theirs is the spelling a request has to match.
+    """
+    key = area_key(area)
+    if not key:
+        return normalize_area(area)
+    row = conn.execute(
+        "SELECT area FROM users "
+        "WHERE TRIM(LOWER(COALESCE(area,''))) = ? "
+        "GROUP BY area "
+        "ORDER BY SUM(CASE WHEN role = 'shop' THEN 1 ELSE 0 END) DESC, COUNT(*) DESC "
+        "LIMIT 1", (key,)
+    ).fetchone()
+    return row["area"] if row else normalize_area(area)
+
+
+def count_shops_in_area(conn: sqlite3.Connection, area: Optional[str]) -> int:
+    key = area_key(area)
+    if not key:
+        return 0
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM users "
+        "WHERE role = 'shop' AND TRIM(LOWER(COALESCE(area,''))) = ?", (key,)
+    ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 def public_user(user: dict) -> dict:
     """Never let the password hash out of the building."""
     return {
@@ -292,7 +348,7 @@ def register(data: RegisterIn, background: BackgroundTasks,
         "INSERT INTO users (name, email, password, role, area, shop_name) "
         "VALUES (?,?,?,?,?,?)",
         (data.name.strip(), email, hash_password(data.password), data.role,
-         (data.area or "").strip() or None,
+         normalize_area(data.area),
          (data.shop_name or "").strip() or None),
     )
     user_id = cur.lastrowid
@@ -338,6 +394,48 @@ def categories():
     return {"categories": CATEGORIES}
 
 
+@app.get("/api/areas", tags=["catalog"])
+def areas(conn: sqlite3.Connection = Depends(get_db)):
+    """
+    Areas already in use, with how many shops cover each.
+
+    Clients offer these as suggestions so that everyone in one place spells it
+    the same way. Without that, a request and the shops that should answer it
+    end up filed under names that never meet. Public on purpose: the signup
+    form needs it before anyone has an account.
+
+    Grouped on the lowercase form so "Civil Lines" and "civil lines" count
+    once, and the spelling returned is whichever shops use most, since shops
+    are the side that has to match for a request to go anywhere.
+    """
+    rows = conn.execute(
+        "SELECT area, "
+        "       SUM(CASE WHEN role = 'shop' THEN 1 ELSE 0 END) AS shops, "
+        "       COUNT(*) AS people "
+        "FROM users "
+        "WHERE area IS NOT NULL AND TRIM(area) <> '' "
+        "GROUP BY TRIM(LOWER(area)), area "
+        "ORDER BY shops DESC, people DESC"
+    ).fetchall()
+
+    merged: dict = {}
+    for r in rows:
+        key = area_key(r["area"])
+        entry = merged.get(key)
+        if entry is None:
+            merged[key] = {"area": r["area"], "shops": r["shops"], "people": r["people"]}
+        else:
+            # Same place, different capitalisation: keep the spelling that the
+            # most shops use and add the counts together.
+            if r["shops"] > entry["shops"]:
+                entry["area"] = r["area"]
+            entry["shops"] += r["shops"]
+            entry["people"] += r["people"]
+
+    out = sorted(merged.values(), key=lambda a: (-a["shops"], -a["people"], a["area"]))
+    return {"areas": out}
+
+
 # ==========================================================================
 # Student: requests
 # ==========================================================================
@@ -359,7 +457,17 @@ def create_request(data: RequestIn, background: BackgroundTasks,
     conn.commit()
 
     background.add_task(emailer.notify_new_request, request_id)
-    return {"ok": True, "id": request_id}
+
+    # How many shops this actually reached. A request posted into an area with
+    # no shops in it looks identical to one nobody has answered yet, and the
+    # student waits on an empty screen with nothing to act on. Returning the
+    # count lets the client say which of the two just happened.
+    return {
+        "ok": True,
+        "id": request_id,
+        "area": canonical_area(conn, user["area"]),
+        "shops_notified": count_shops_in_area(conn, user["area"]),
+    }
 
 
 @app.get("/api/requests/mine", tags=["requests"])

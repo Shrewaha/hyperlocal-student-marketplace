@@ -40,6 +40,7 @@
     user: null,
     token: store(sessionStorage, TOKEN_KEY) || null,
     categories: [],
+    areas: [],
     myAreaOnly: false,
     lastRequestId: null,
   };
@@ -224,6 +225,90 @@
       .catch(function () {
         /* The forms still submit; the server validates the category anyway. */
       });
+  }
+
+  /* ---------------------------------------------------------------- areas */
+
+  /*
+   * Area decides which shops hear about a request, and it is typed by hand.
+   * Someone who invents a spelling nobody else uses gets a marketplace of
+   * one: their request reaches no shop, and the screen that follows looks
+   * exactly like one where shops simply have not replied yet. Suggesting the
+   * areas already in use is what stops that happening in the first place.
+   */
+
+  function loadAreas() {
+    return request("/api/areas", { auth: false })
+      .then(function (data) {
+        state.areas = data.areas || [];
+        var list = $("#known-areas");
+        if (!list) return;
+        list.textContent = "";
+        state.areas.forEach(function (a) {
+          var opt = document.createElement("option");
+          opt.value = a.area;
+          // Shown beside the suggestion by most browsers, so the choice
+          // carries the reason to make it.
+          opt.label = a.shops === 1 ? "1 shop" : a.shops + " shops";
+          list.appendChild(opt);
+        });
+      })
+      .catch(function () {
+        /* Suggestions are a convenience. Typing an area still works. */
+      });
+  }
+
+  function areaMatch(typed) {
+    var key = (typed || "").trim().replace(/\s+/g, " ").toLowerCase();
+    if (!key) return null;
+    for (var i = 0; i < state.areas.length; i++) {
+      if (state.areas[i].area.trim().replace(/\s+/g, " ").toLowerCase() === key) {
+        return state.areas[i];
+      }
+    }
+    return null;
+  }
+
+  function paintAreaHint() {
+    var hint = $("#area-hint");
+    if (!hint) return;
+    var form = $("#auth-form");
+    var typed = form.elements.area ? form.elements.area.value : "";
+    var role = form.elements.role ? form.elements.role.value : "student";
+
+    hint.className = "hint-line";
+    if (!registering || !typed.trim()) {
+      hint.textContent = "";
+      return;
+    }
+
+    var found = areaMatch(typed);
+    if (!found) {
+      hint.className = "hint-line hint-line--warn";
+      hint.textContent =
+        state.areas.length === 0
+          ? "First one here. Shops that register with this exact name will see your requests."
+          : "New area. Pick a suggested one if yours is listed, so you match the shops already there.";
+      return;
+    }
+
+    if (role === "shop") {
+      hint.className = "hint-line hint-line--ok";
+      hint.textContent =
+        found.people === 1 ? "1 person here already." : found.people + " people here already.";
+      return;
+    }
+
+    if (found.shops === 0) {
+      hint.className = "hint-line hint-line--warn";
+      hint.textContent = "No shops here yet, so requests may go unanswered for now.";
+    } else {
+      hint.className = "hint-line hint-line--ok";
+      hint.textContent =
+        found.shops === 1
+          ? "1 shop here will see your requests."
+          : found.shops + " shops here will see your requests.";
+    }
   }
 
   /* --------------------------------------------------------------- browse */
@@ -654,7 +739,14 @@
   });
 
   $("#auth-form").addEventListener("change", function (e) {
-    if (e.target.name === "role") paintRoleFields();
+    if (e.target.name === "role") {
+      paintRoleFields();
+      paintAreaHint();
+    }
+  });
+
+  $("#auth-form").addEventListener("input", function (e) {
+    if (e.target.name === "area") paintAreaHint();
   });
 
   $("#auth-form").addEventListener("submit", function (e) {
@@ -723,10 +815,30 @@
         budget: f.budget.value ? Number(f.budget.value) : null,
       },
     }).then(
-      function () {
+      function (data) {
         e.target.reset();
-        msg.className = "msg msg--ok";
-        text(msg, "Posted. Shops in your area have been emailed.");
+        var n = data && data.shops_notified;
+        var where = (data && data.area) || "your area";
+        if (n === 0) {
+          /* Not an error -- the request is saved and any shop browsing can
+             still answer it. But saying so beats an empty offers list that
+             never explains itself. */
+          msg.className = "msg msg--warn";
+          text(
+            msg,
+            "Posted, but no shops have registered in " +
+              where +
+              " yet. It is still visible to every shop browsing open requests."
+          );
+        } else {
+          msg.className = "msg msg--ok";
+          text(
+            msg,
+            n === 1
+              ? "Posted. 1 shop in " + where + " has been emailed."
+              : "Posted. " + n + " shops in " + where + " have been emailed."
+          );
+        }
         loadMyRequests();
       },
       function (err) {
@@ -809,6 +921,7 @@
 
   paintAuthMode();
   loadCategories()
+    .then(loadAreas)
     .then(restoreSession)
     .then(function () {
       go(state.user ? "home" : "browse");
