@@ -47,6 +47,8 @@
     areas: [],
     unread: 0,
     alerts: 0,
+    avatar: null,
+    cameFrom: "browse",
     thread: null,
     location: null,
     category: "", // active chip on the browse screen
@@ -94,6 +96,32 @@
     use.setAttribute("href", "#" + symbolId);
     svg.appendChild(use);
     return svg;
+  }
+
+  /* -------------------------------------------------------------- avatars */
+
+  /*
+   * Someone's picture, or their initial on the brand colour when they have
+   * none. A grey silhouette reads as a missing thing; a letter reads as a
+   * person who simply has not uploaded one.
+   */
+  function avatar(user, big) {
+    var box = el("span", "avatar" + (big ? " avatar--lg" : ""));
+    var name = (user && (user.shop_name || user.name)) || "";
+    box.textContent = name.trim().charAt(0) || "?";
+
+    var id = user && (user.id || user.shop_id);
+    if (user && user.has_avatar && id) {
+      var img = document.createElement("img");
+      img.src = apiBase() + "/api/users/" + id + "/avatar";
+      img.alt = "";
+      img.loading = "lazy";
+      img.addEventListener("error", function () {
+        img.remove(); /* leaves the initial behind */
+      });
+      box.appendChild(img);
+    }
+    return box;
   }
 
   /* --------------------------------------------------------------- toasts */
@@ -326,7 +354,7 @@
 
   /* Screens reached from a tab rather than being one. The tab that leads
      here stays lit, so the bar never goes blank mid-journey. */
-  var PARENT_OF = { compare: "mine", thread: "chats" };
+  var PARENT_OF = { compare: "mine", thread: "chats", shop: "browse" };
 
   function paintTabs() {
     var nav = $("#tabs");
@@ -361,6 +389,7 @@
     "chats",
     "thread",
     "alerts",
+    "shop",
     "account",
   ];
 
@@ -441,6 +470,7 @@
     var isShop = u.role === "shop";
 
     text($("#account-name"), u.shop_name || u.name);
+    paintAvatarPreview();
     text(
       $("#account-meta"),
       [isShop ? "Shop" : "Student", u.area, u.email].filter(Boolean).join(" · ")
@@ -470,6 +500,26 @@
         ? { lat: u.lat, lng: u.lng }
         : null;
     paintLocation();
+  }
+
+  function paintAvatarPreview() {
+    var slot = $("#avatar-preview");
+    if (!slot || !state.user) return;
+    var shown = state.avatar
+      ? { shop_name: state.user.shop_name, name: state.user.name, has_avatar: false }
+      : state.user;
+    var fresh = avatar(shown, true);
+    fresh.id = "avatar-preview";
+    /* A picture just chosen has not been uploaded yet, so it is shown from
+       the data URL rather than from a URL the server does not serve. */
+    if (state.avatar) {
+      var img = document.createElement("img");
+      img.src = state.avatar;
+      img.alt = "";
+      fresh.appendChild(img);
+    }
+    slot.replaceWith(fresh);
+    show($("#avatar-clear"), !!(state.avatar || state.user.has_avatar));
   }
 
   function paintLocation() {
@@ -665,21 +715,7 @@
           return;
         }
         items.forEach(function (p) {
-          var card = el("article", "tile");
-          var art = artBlock(p.category, "tile__art", p);
-          if (p.stock === 0) art.appendChild(el("span", "tile__badge", "OUT OF STOCK"));
-          card.appendChild(art);
-
-          var body = el("div", "tile__body");
-          body.appendChild(el("h3", "tile__name", p.name));
-          body.appendChild(
-            el("span", "tile__meta", [p.shop_name || p.shop_contact, p.area].filter(Boolean).join(" · "))
-          );
-          var foot = el("div", "tile__foot");
-          foot.appendChild(el("span", "price", rupees(p.price)));
-          body.appendChild(foot);
-          card.appendChild(body);
-          grid.appendChild(card);
+          grid.appendChild(productCard(p));
         });
       })
       .catch(function (err) {
@@ -1008,7 +1044,14 @@
         var best = offers[0];
         var card = el("div", "best-card");
         card.appendChild(el("span", "best-card__tag", "CHEAPEST"));
-        card.appendChild(el("div", "best-card__shop", best.shop_name));
+        var bestWho = el("div", "best-card__shop");
+        var bestLink = el("button", "shoplink", best.shop_name);
+        bestLink.type = "button";
+        bestLink.addEventListener("click", function () {
+          openShop(best.shop_id);
+        });
+        bestWho.appendChild(bestLink);
+        card.appendChild(bestWho);
         card.appendChild(
           el(
             "div",
@@ -1028,7 +1071,14 @@
         offers.slice(1).forEach(function (o) {
           var li = el("li");
           var main = el("div", "row__main");
-          main.appendChild(el("div", "row__name", o.shop_name));
+          var nameRow = el("div", "row__name");
+          var link = el("button", "shoplink", o.shop_name);
+          link.type = "button";
+          link.addEventListener("click", function () {
+            openShop(o.shop_id);
+          });
+          nameRow.appendChild(link);
+          main.appendChild(nameRow);
           main.appendChild(
             el(
               "div",
@@ -1062,47 +1112,226 @@
    * price; the in-app thread is for when neither is answering, and email is
    * the fallback nobody asked for but somebody will want.
    */
-  function contactRow(offer, requestId) {
+  /*
+   * One implementation, used by an offer and by a shop's own page. The chat
+   * button needs a request to belong to, so it only appears where there is
+   * one -- a shop page reached from browsing has no conversation to open.
+   */
+  function contactRowFor(info) {
     var box = el("div", "contact");
 
-    if (offer.phone) {
+    if (info.phone) {
       var wa = el("a", "btn btn--primary", "WhatsApp");
       /* wa.me wants digits only, no plus. */
-      wa.href = "https://wa.me/" + offer.phone.replace(/\D/g, "");
+      wa.href = "https://wa.me/" + info.phone.replace(/\D/g, "");
       wa.target = "_blank";
       wa.rel = "noopener";
       box.appendChild(wa);
 
       var call = el("a", "btn", "Call");
-      call.href = "tel:" + offer.phone.replace(/[^\d+]/g, "");
+      call.href = "tel:" + info.phone.replace(/[^\d+]/g, "");
       box.appendChild(call);
     }
 
-    var chat = el("button", "btn", "Message");
-    chat.type = "button";
-    chat.addEventListener("click", function () {
-      openThread(requestId, offer.shop_id, offer.shop_name);
-    });
-    box.appendChild(chat);
+    if (info.request_id) {
+      var chat = el("button", "btn", "Message");
+      chat.type = "button";
+      chat.addEventListener("click", function () {
+        openThread(info.request_id, info.shop_id, info.shop_name);
+      });
+      box.appendChild(chat);
+    }
 
-    if (offer.email) {
+    if (info.email) {
       var mail = el("a", "btn", "Email");
-      mail.href = "mailto:" + offer.email;
+      mail.href = "mailto:" + info.email;
       box.appendChild(mail);
     }
 
     /* Where to actually go, when the shop has said. */
-    if (offer.lat !== null && offer.lat !== undefined &&
-        offer.lng !== null && offer.lng !== undefined) {
+    if (info.lat !== null && info.lat !== undefined &&
+        info.lng !== null && info.lng !== undefined) {
       var map = el("a", "btn", "Directions");
       map.href = "https://www.google.com/maps/search/?api=1&query=" +
-        encodeURIComponent(offer.lat + "," + offer.lng);
+        encodeURIComponent(info.lat + "," + info.lng);
       map.target = "_blank";
       map.rel = "noopener";
       box.appendChild(map);
     }
 
     return box;
+  }
+
+  function contactRow(offer, requestId) {
+    return contactRowFor({
+      shop_id: offer.shop_id,
+      shop_name: offer.shop_name,
+      phone: offer.phone,
+      email: offer.email,
+      lat: offer.lat,
+      lng: offer.lng,
+      request_id: requestId,
+    });
+  }
+
+  /*
+   * One product card, shared by browsing and by a shop's page.
+   *
+   * "Request this" is the point: a student looking at a listed price should
+   * be able to ask every shop nearby to beat it without retyping what the
+   * thing is called.
+   */
+  function productCard(p, shopNameOverride) {
+    var card = el("article", "tile");
+    var art = artBlock(p.category, "tile__art", p);
+    if (p.stock === 0) art.appendChild(el("span", "tile__badge", "OUT OF STOCK"));
+    card.appendChild(art);
+
+    var body = el("div", "tile__body");
+    body.appendChild(el("h3", "tile__name", p.name));
+
+    var shopName = shopNameOverride || p.shop_name || p.shop_contact;
+    if (shopNameOverride) {
+      body.appendChild(el("span", "tile__meta", p.specs || ""));
+    } else {
+      var who = el("button", "tile__meta shoplink", shopName);
+      who.type = "button";
+      who.addEventListener("click", function () {
+        openShop(p.shop_id);
+      });
+      body.appendChild(who);
+    }
+
+    var foot = el("div", "tile__foot");
+    foot.appendChild(el("span", "price", rupees(p.price)));
+    body.appendChild(foot);
+
+    var ask = el("button", "btn btn--sm btn--primary btn--block", "Request this");
+    ask.type = "button";
+    ask.style.marginTop = "0.5rem";
+    ask.addEventListener("click", function () {
+      startRequestFor(p);
+    });
+    body.appendChild(ask);
+
+    card.appendChild(body);
+    return card;
+  }
+
+  /*
+   * Carry a listing into the post form. Signed out, that means signing up
+   * first -- so the listing is remembered and filled in on the other side,
+   * rather than lost to the detour.
+   */
+  var pendingRequest = null;
+
+  function startRequestFor(p) {
+    pendingRequest = { title: p.name, category: p.category, specs: p.specs || "" };
+    if (!state.user) {
+      toast("Create an account and we will carry this over.", null, 5000);
+      openAuth(true);
+      return;
+    }
+    if (state.user.role === "shop") {
+      toast("Shops answer requests rather than posting them.", "warn", 5000);
+      return;
+    }
+    go("post");
+    fillPendingRequest();
+  }
+
+  function fillPendingRequest() {
+    if (!pendingRequest) return;
+    var f = $("#request-form").elements;
+    f.title.value = pendingRequest.title;
+    if (pendingRequest.category) f.category.value = pendingRequest.category;
+    if (pendingRequest.specs) f.specs.value = pendingRequest.specs;
+    pendingRequest = null;
+    toast("Filled in from that listing. Add your budget.", null, 5000);
+  }
+
+  /* ------------------------------------------------------------ shop page */
+
+  /*
+   * A shop's public page. Reachable without an account, because the moment a
+   * student most wants to know who is quoting them is exactly the moment a
+   * sign-in wall would send them away.
+   */
+  function openShop(shopId) {
+    state.cameFrom = state.view === "shop" ? state.cameFrom : state.view;
+    go("shop");
+
+    var grid = $("#shop-products");
+    var empty = $("#shop-products-empty");
+    var stats = $("#shop-stats");
+    var contact = $("#shop-contact");
+    grid.textContent = "";
+    stats.textContent = "";
+    contact.textContent = "";
+    show(empty, false);
+    /* Cleared first: opening one shop after another that fails to load would
+       otherwise leave the previous shop's name above the new one's error. */
+    text($("#shop-name"), "Loading\u2026");
+    text($("#shop-where"), "");
+    show($("#shop-about"), false);
+    text($("#shop-count"), "");
+
+    return request("/api/shops/" + shopId, { auth: false })
+      .then(function (data) {
+        var shop = data.shop;
+
+        var head = $("#shop-avatar");
+        head.replaceWith(avatar({ id: shop.id, shop_name: shop.name, has_avatar: shop.has_avatar }, true));
+        /* replaceWith drops the id, so put it back for the next visit. */
+        document.querySelector(".shopfront .avatar").id = "shop-avatar";
+
+        text($("#shop-name"), shop.name);
+        text(
+          $("#shop-where"),
+          [shop.area, shop.address].filter(Boolean).join(" · ") || "No address given"
+        );
+
+        if (shop.about) {
+          text($("#shop-about"), shop.about);
+          show($("#shop-about"), true);
+        } else {
+          show($("#shop-about"), false);
+        }
+
+        [
+          ["Listings", String(data.products.length)],
+          ["Offers made", String(data.offers)],
+          ["Times cheapest", String(data.cheapest)],
+        ].forEach(function (pair) {
+          var box = el("div");
+          box.appendChild(el("dt", null, pair[0]));
+          box.appendChild(el("dd", null, pair[1]));
+          stats.appendChild(box);
+        });
+
+        /* The same ways in as an offer carries, built from the same fields. */
+        contact.appendChild(
+          contactRowFor({
+            shop_id: shop.id,
+            phone: shop.phone,
+            lat: shop.lat,
+            lng: shop.lng,
+          })
+        );
+
+        text($("#shop-count"), data.products.length ? "Cheapest first" : "");
+        if (!data.products.length) {
+          emptyState(empty, "Nothing listed yet.", "This shop answers requests but has not added a catalogue.");
+          return;
+        }
+        data.products.forEach(function (p) {
+          grid.appendChild(productCard(p, shop.name));
+        });
+      })
+      .catch(function (err) {
+        text($("#shop-name"), "Shop unavailable");
+        emptyState(empty, "Could not load that shop.", err.message);
+      });
   }
 
   /* --------------------------------------------------------------- alerts */
@@ -1354,6 +1583,7 @@
     state.alerts = 0;
     state.thread = null;
     state.location = null;
+    state.avatar = null;
     store(localStorage, TOKEN_KEY, null);
     go("browse");
   });
@@ -1421,7 +1651,13 @@
     };
 
     if (!registering) {
-      signIn(email, password).then(done, failed);
+      signIn(email, password).then(function () {
+        done();
+        if (pendingRequest && state.user && state.user.role === "student") {
+          go("post");
+          fillPendingRequest();
+        }
+      }, failed);
       return;
     }
 
@@ -1442,7 +1678,14 @@
       .then(function () {
         return signIn(email, password);
       })
-      .then(done, failed);
+      .then(function () {
+        done();
+        /* They came here from a listing; take them the rest of the way. */
+        if (pendingRequest && state.user && state.user.role === "student") {
+          go("post");
+          fillPendingRequest();
+        }
+      }, failed);
   });
 
   $("#request-form").addEventListener("submit", function (e) {
@@ -1615,6 +1858,44 @@
     });
   });
 
+  $("#shop-back").addEventListener("click", function () {
+    go(state.cameFrom || "browse");
+  });
+
+  $("#avatar-input").addEventListener("change", function (e) {
+    var hint = $("#avatar-hint");
+    var file = e.target.files && e.target.files[0];
+    hint.className = "hint-line";
+    hint.textContent = "";
+    if (!file) return;
+
+    hint.textContent = "Preparing\u2026";
+    /* Square-ish and small: it is shown at 36px in a row and 72px on a
+       profile, so anything larger is bytes nobody sees. */
+    shrinkImage(file, 400, 0.78).then(
+      function (dataUrl) {
+        state.avatar = dataUrl;
+        paintAvatarPreview();
+        hint.className = "hint-line hint-line--ok";
+        hint.textContent = "Ready. Save the profile to keep it.";
+      },
+      function (err) {
+        hint.className = "hint-line hint-line--warn";
+        hint.textContent = err.message;
+      }
+    );
+  });
+
+  $("#avatar-clear").addEventListener("click", function () {
+    state.avatar = "";          /* empty string means remove, not untouched */
+    var slot = $("#avatar-preview");
+    var fresh = avatar({ shop_name: state.user.shop_name, name: state.user.name }, true);
+    fresh.id = "avatar-preview";
+    slot.replaceWith(fresh);
+    show($("#avatar-clear"), false);
+    text($("#avatar-hint"), "Will be removed when you save.");
+  });
+
   $("#bell").addEventListener("click", function () {
     go("alerts");
   });
@@ -1665,6 +1946,9 @@
       name: f.name.value.trim(),
       area: f.area.value.trim(),
     };
+    /* null means untouched; "" means remove. Only send it when one of those
+       was actually chosen. */
+    if (state.avatar !== null) body.avatar = state.avatar;
     if (isShop) {
       body.shop_name = f.shop_name.value.trim();
       body.phone = f.phone.value.trim();
@@ -1684,7 +1968,9 @@
     request("/api/me", { method: "PATCH", body: body }).then(
       function (user) {
         state.user = user;
+        state.avatar = null;
         text(msg, "");
+        text($("#avatar-hint"), "");
         paintAccount();
         paintTabs();
         toast("Profile saved.", "ok");

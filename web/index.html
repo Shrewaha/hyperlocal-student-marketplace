@@ -407,6 +407,31 @@
         </p>
       </section>
 
+      <!-- =========================================================== shop -->
+      <section id="view-shop" hidden>
+        <div class="shopfront">
+          <span class="avatar avatar--lg" id="shop-avatar"></span>
+          <div class="shopfront__text">
+            <h1 id="shop-name">Shop</h1>
+            <p id="shop-where"></p>
+          </div>
+        </div>
+        <p id="shop-about" class="shop-about" hidden></p>
+        <dl class="stats" id="shop-stats"></dl>
+        <div class="contact" id="shop-contact"></div>
+
+        <div class="section__head" style="margin-top: 1.5rem">
+          <h2>What they list</h2>
+          <span class="side" id="shop-count"></span>
+        </div>
+        <div class="grid" id="shop-products"></div>
+        <div class="empty" id="shop-products-empty" hidden></div>
+
+        <p style="margin-top: 1rem">
+          <button class="btn btn--sm" id="shop-back" type="button">Back</button>
+        </p>
+      </section>
+
       <!-- ===================================================== notifications -->
       <section id="view-alerts" hidden>
         <div class="hero">
@@ -427,6 +452,26 @@
         <div class="section__head"><h2>Your profile</h2></div>
         <div class="card">
           <form id="profile-form">
+            <div class="avatar-row">
+              <span class="avatar avatar--lg" id="avatar-preview"></span>
+              <div>
+                <label class="btn btn--sm" for="avatar-input" id="avatar-pick">
+                  Choose a photo
+                </label>
+                <input
+                  id="avatar-input"
+                  name="avatar"
+                  type="file"
+                  accept="image/*"
+                  class="sr"
+                />
+                <button class="btn btn--sm btn--ghost" type="button" id="avatar-clear" hidden>
+                  Remove
+                </button>
+                <small class="hint-line" id="avatar-hint"></small>
+              </div>
+            </div>
+
             <label class="field">
               <span>Name</span>
               <input name="name" maxlength="120" required />

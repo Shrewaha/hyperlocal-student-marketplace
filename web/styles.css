@@ -687,6 +687,108 @@ button {
   color: var(--best);
 }
 
+/* ---------------------------------------------------------------- avatar */
+
+/*
+ * Falls back to an initial on the brand colour rather than a grey silhouette,
+ * so an account with no picture still looks like somebody rather than like a
+ * gap. The initial is set from script as a data attribute.
+ */
+.avatar {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: var(--brand);
+  color: var(--brand-ink);
+  font-weight: 800;
+  font-size: 0.9375rem;
+  overflow: hidden;
+  position: relative;
+  text-transform: uppercase;
+}
+
+.avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar--lg {
+  width: 4.5rem;
+  height: 4.5rem;
+  font-size: 1.75rem;
+}
+
+.avatar-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.avatar-row .btn {
+  margin-right: 0.3rem;
+}
+
+/* ------------------------------------------------------------ shopfront */
+
+.shopfront {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 1.25rem 0 0.75rem;
+}
+
+.shopfront__text {
+  min-width: 0;
+}
+
+.shopfront h1 {
+  font-size: clamp(1.4rem, 5.5vw, 2rem);
+}
+
+.shopfront p {
+  margin: 0.2rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+}
+
+.shop-about {
+  color: var(--ink-soft);
+  font-size: 0.9375rem;
+  margin-bottom: 1rem;
+}
+
+/* A shop's name is a way in to its page, so it should look like one. */
+.shoplink {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.shoplink:hover {
+  text-decoration-color: var(--brand);
+}
+
+/* A row that carries a face sets it beside the text. */
+.row__who {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 /* ------------------------------------------------------------------ bell */
 
 .bell {

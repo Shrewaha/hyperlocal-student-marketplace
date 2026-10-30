@@ -6,6 +6,22 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-30
+
+### Added
+
+- **Request this.** Every listing carries a button that starts a request for
+  that item, prefilled with its name and category. Signed out, the listing is
+  remembered across signing up rather than lost to the detour.
+- **Profile photos** for students and shops, shrunk in the browser and served
+  from their own URL. An account without one shows its initial on the brand
+  colour rather than a grey silhouette.
+- **Shop pages.** `GET /api/shops/{id}`: who they are, where they are, how to
+  reach them, everything they list, and how often they have been the cheapest
+  answer. Open without an account, since the moment a student most wants to
+  know who is quoting them is the worst moment for a sign-in wall. A shop's
+  name is a link to it from anywhere it appears.
+
 ## [1.5.0] - 2026-10-30
 
 ### Added
@@ -155,7 +171,8 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.6.0
 [1.5.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.5.0
 [1.4.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.4.0
 [1.3.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.3.0
