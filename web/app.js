@@ -42,6 +42,8 @@
     token: store(sessionStorage, TOKEN_KEY) || null,
     categories: [],
     areas: [],
+    unread: 0,
+    thread: null,
     category: "", // active chip on the browse screen
     myAreaOnly: false,
     view: "browse",
@@ -226,12 +228,14 @@
       { view: "browse", label: "Browse", glyph: "t-browse" },
       { view: "post", label: "Post", glyph: "t-post" },
       { view: "mine", label: "Requests", glyph: "t-list" },
+      { view: "chats", label: "Chats", glyph: "t-chat", badge: true },
       { view: "account", label: "Account", glyph: "t-user" },
     ],
     shop: [
       { view: "browse", label: "Browse", glyph: "t-browse" },
       { view: "requests", label: "Requests", glyph: "t-list" },
-      { view: "offers-mine", label: "My offers", glyph: "t-post" },
+      { view: "offers-mine", label: "Offers", glyph: "t-post" },
+      { view: "chats", label: "Chats", glyph: "t-chat", badge: true },
       { view: "account", label: "Account", glyph: "t-user" },
     ],
   };
@@ -243,7 +247,7 @@
 
   /* Screens reached from a tab rather than being one. The tab that leads
      here stays lit, so the bar never goes blank mid-journey. */
-  var PARENT_OF = { compare: "mine" };
+  var PARENT_OF = { compare: "mine", thread: "chats" };
 
   function paintTabs() {
     var nav = $("#tabs");
@@ -254,6 +258,9 @@
       b.type = "button";
       b.appendChild(icon(t.glyph));
       b.appendChild(el("span", null, t.label));
+      if (t.badge && state.unread > 0) {
+        b.appendChild(el("span", "tab__badge", state.unread > 9 ? "9+" : String(state.unread)));
+      }
       if (active === t.view) b.setAttribute("aria-current", "page");
       b.addEventListener("click", function () {
         go(t.view);
@@ -272,6 +279,8 @@
     "requests",
     "offers-mine",
     "compare",
+    "chats",
+    "thread",
     "account",
   ];
 
@@ -298,7 +307,10 @@
     if (name === "mine") loadMyRequests();
     if (name === "requests") loadOpenRequests();
     if (name === "offers-mine") loadMyOffers().then(loadMyProducts).catch(function () {});
+    if (name === "chats") loadThreads();
     if (name === "account") paintAccount();
+    // Anywhere else, a quiet check so a reply that arrived meanwhile shows up.
+    if (name !== "chats" && name !== "thread") refreshUnread();
   }
 
   /*
@@ -581,6 +593,7 @@
     state.user = data.user;
     store(sessionStorage, TOKEN_KEY, data.token);
     go("home");
+    refreshUnread(true);
   }
 
   function signIn(email, password) {
@@ -877,6 +890,7 @@
           price.appendChild(el("span", "saving", rupees(under) + " under budget"));
         }
         card.appendChild(price);
+        card.appendChild(contactRow(best, requestId));
         slot.appendChild(card);
 
         offers.slice(1).forEach(function (o) {
@@ -890,6 +904,7 @@
               [o.product_name, o.area, o.specs, o.note].filter(Boolean).join(" · ")
             )
           );
+          main.appendChild(contactRow(o, requestId));
           var side = el("div", "row__side");
           side.appendChild(el("span", "price", rupees(o.price)));
           side.appendChild(el("span", "delta", "+" + rupees(o.price_diff_vs_best)));
@@ -904,6 +919,158 @@
       })
       .catch(function (err) {
         emptyState(empty, "Could not load the offers.", err.message);
+      });
+  }
+
+  /* -------------------------------------------------------------- contact */
+
+  /*
+   * Three ways to reach a shop, in the order people actually use them here.
+   * WhatsApp and a phone call are how a student and a local shop settle a
+   * price; the in-app thread is for when neither is answering, and email is
+   * the fallback nobody asked for but somebody will want.
+   */
+  function contactRow(offer, requestId) {
+    var box = el("div", "contact");
+
+    if (offer.phone) {
+      var wa = el("a", "btn btn--primary", "WhatsApp");
+      /* wa.me wants digits only, no plus. */
+      wa.href = "https://wa.me/" + offer.phone.replace(/\D/g, "");
+      wa.target = "_blank";
+      wa.rel = "noopener";
+      box.appendChild(wa);
+
+      var call = el("a", "btn", "Call");
+      call.href = "tel:" + offer.phone.replace(/[^\d+]/g, "");
+      box.appendChild(call);
+    }
+
+    var chat = el("button", "btn", "Message");
+    chat.type = "button";
+    chat.addEventListener("click", function () {
+      openThread(requestId, offer.shop_id, offer.shop_name);
+    });
+    box.appendChild(chat);
+
+    if (offer.email) {
+      var mail = el("a", "btn", "Email");
+      mail.href = "mailto:" + offer.email;
+      box.appendChild(mail);
+    }
+
+    return box;
+  }
+
+  /* ------------------------------------------------------------- messages */
+
+  var lastUnreadCheck = 0;
+
+  function refreshUnread(force) {
+    if (!state.user) {
+      state.unread = 0;
+      return Promise.resolve();
+    }
+    var now = Date.now();
+    if (!force && now - lastUnreadCheck < 15000) return Promise.resolve();
+    lastUnreadCheck = now;
+    return request("/api/messages/threads")
+      .then(function (data) {
+        state.unread = data.unread_total || 0;
+        paintTabs();
+      })
+      .catch(function () {});
+  }
+
+  function loadThreads() {
+    var list = $("#threads");
+    var empty = $("#threads-empty");
+    list.textContent = "";
+    show(empty, false);
+
+    return request("/api/messages/threads")
+      .then(function (data) {
+        state.unread = data.unread_total || 0;
+        paintTabs();
+
+        var items = data.threads || [];
+        if (!items.length) {
+          emptyState(
+            empty,
+            "No messages yet.",
+            state.user && state.user.role === "shop"
+              ? "A student can start a conversation from one of your offers."
+              : "Open a request you have offers on and message a shop from there."
+          );
+          return;
+        }
+        items.forEach(function (t) {
+          var li = el("li");
+          var main = el("div", "row__main");
+          main.appendChild(el("div", "row__name", t.with_name));
+          main.appendChild(
+            el("div", "row__meta", t.title + " · " + (t.last_body || ""))
+          );
+          var side = el("div", "row__side");
+          if (t.unread > 0) side.appendChild(el("span", "count", String(t.unread)));
+          var open = el("button", "btn btn--sm btn--primary", "Open");
+          open.type = "button";
+          open.addEventListener("click", function () {
+            openThread(t.request_id, t.shop_id, t.with_name);
+          });
+          side.appendChild(open);
+          li.appendChild(main);
+          li.appendChild(side);
+          list.appendChild(li);
+        });
+      })
+      .catch(function (err) {
+        emptyState(empty, "Could not load messages.", err.message);
+      });
+  }
+
+  function openThread(requestId, shopId, withName) {
+    state.thread = { request_id: requestId, shop_id: shopId, with_name: withName };
+    go("thread");
+    return loadThread();
+  }
+
+  function loadThread() {
+    if (!state.thread) return Promise.resolve();
+    var box = $("#thread-messages");
+    box.textContent = "";
+
+    return request(
+      "/api/messages/thread?request_id=" +
+        state.thread.request_id +
+        "&shop_id=" +
+        state.thread.shop_id
+    )
+      .then(function (data) {
+        text($("#thread-title"), state.thread.with_name || "Conversation");
+        text(
+          $("#thread-sub"),
+          [data.title, data.budget ? "budget " + rupees(data.budget) : null]
+            .filter(Boolean)
+            .join(" · ")
+        );
+
+        if (!data.messages.length) {
+          box.appendChild(
+            el("p", "empty", "No messages yet. Say what you need and they will see it here.")
+          );
+        }
+        data.messages.forEach(function (m) {
+          var bubble = el("div", m.mine ? "bubble bubble--mine" : "bubble", m.body);
+          bubble.appendChild(el("span", "bubble__when", m.mine ? "You" : m.sender_name));
+          box.appendChild(bubble);
+        });
+        box.scrollIntoView({ block: "end" });
+        /* Reading it cleared the unread count server-side; reflect that. */
+        return refreshUnread(true);
+      })
+      .catch(function (err) {
+        box.appendChild(el("p", "empty", err.message));
       });
   }
 
@@ -943,6 +1110,8 @@
     request("/api/logout", { method: "POST" }).catch(function () {});
     state.token = null;
     state.user = null;
+    state.unread = 0;
+    state.thread = null;
     store(sessionStorage, TOKEN_KEY, null);
     go("browse");
   });
@@ -1025,6 +1194,7 @@
         role: role,
         area: f.area.value.trim() || null,
         shop_name: role === "shop" ? f.shop_name.value.trim() : null,
+        phone: role === "shop" ? f.phone.value.trim() || null : null,
       },
     })
       .then(function () {
@@ -1136,10 +1306,40 @@
     );
   });
 
+  $("#thread-back").addEventListener("click", function () {
+    go("chats");
+  });
+
+  $("#thread-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (!state.thread) return;
+    var input = e.target.elements.body;
+    var body = input.value.trim();
+    if (!body) return;
+    input.value = "";
+
+    request("/api/messages", {
+      method: "POST",
+      body: {
+        request_id: state.thread.request_id,
+        shop_id: state.thread.shop_id,
+        body: body,
+      },
+    }).then(loadThread, function (err) {
+      // Put the text back rather than losing what they typed.
+      input.value = body;
+      window.alert(err.message);
+    });
+  });
+
   $("#area-toggle").addEventListener("click", function () {
     state.myAreaOnly = !state.myAreaOnly;
     this.setAttribute("aria-pressed", String(state.myAreaOnly));
     loadOpenRequests();
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refreshUnread(true);
   });
 
   /* ----------------------------------------------------------------- boot */
@@ -1158,5 +1358,6 @@
     .then(restoreSession)
     .then(function () {
       go(state.user ? "home" : "browse");
+      return refreshUnread(true);
     });
 })();

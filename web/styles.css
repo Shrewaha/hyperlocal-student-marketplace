@@ -676,6 +676,111 @@ button {
   color: var(--best);
 }
 
+/* ---------------------------------------------------------------- contact */
+
+/* How a student actually reaches a shop once the price is agreed. */
+.contact {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.7rem;
+}
+
+.contact .btn {
+  padding: 0.4rem 0.7rem;
+  font-size: 0.8125rem;
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+/* ------------------------------------------------------------------ chat */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+
+.bubble {
+  max-width: 85%;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+/* Yours on the right, in brand colour: the oldest convention in messaging,
+   and the one that needs no explaining. */
+.bubble--mine {
+  align-self: flex-end;
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-ink);
+}
+
+.bubble__when {
+  display: block;
+  font-size: 0.6875rem;
+  opacity: 0.7;
+  margin-top: 0.2rem;
+}
+
+.chat-compose {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.chat-compose input {
+  flex: 1;
+}
+
+.chat-compose .btn {
+  flex: none;
+}
+
+/* An unread count beside a conversation in the list. */
+.count {
+  background: var(--accent);
+  color: #1a1523;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+
+/* A count of what is waiting, on the tab that leads to it. */
+.tab__badge {
+  position: absolute;
+  top: 0.35rem;
+  left: 50%;
+  margin-left: 0.3rem;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1a1523;
+  font-size: 0.625rem;
+  font-weight: 800;
+  line-height: 1.05rem;
+  text-align: center;
+}
+
+.tab {
+  position: relative;
+}
+
+@media (min-width: 48rem) {
+  .tab__badge {
+    position: static;
+    margin-left: 0.1rem;
+  }
+}
+
 /* --------------------------------------------------------------- summary */
 
 .stats {
