@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Applied automatically when the phone is in dark mode, so the window
+         behind the WebView matches the page's own dark palette. -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/paper_night</item>
+        <item name="android:statusBarColor">@color/paper_night</item>
+        <item name="android:navigationBarColor">@color/paper_night</item>
+    </style>
+</resources>

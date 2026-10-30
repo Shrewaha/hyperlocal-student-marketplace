@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The same ink and paper values styles.css uses, so the window behind
+         the WebView matches the page instead of flashing a different colour
+         while it loads. -->
+    <color name="ink">#16213E</color>
+    <color name="paper">#E9EDF3</color>
+    <color name="paper_night">#0F1424</color>
+    <color name="marigold">#E8A33D</color>
+</resources>

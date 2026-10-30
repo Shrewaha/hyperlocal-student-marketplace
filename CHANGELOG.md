@@ -12,6 +12,11 @@ Notable changes to this project. Format follows
   public product search, accounts, requests, offers and the comparison table.
   No framework and no build step. The API address comes from `web/config.js`,
   or from a box in the page header that stores it in your own browser.
+- **Android app** (`android/`): a WebView around the same `web/` client, with
+  the page bundled in the APK rather than fetched, so the interface opens
+  offline and only the API needs a connection. Gradle copies `web/` in at
+  build time, so the phone app and the website cannot drift apart. Debug-signed
+  and attached to releases as a `.apk`.
 - **`pages.yml`** publishes the browser client to GitHub Pages.
 - **`render.yaml` and `Dockerfile`** for deploying the backend.
 
