@@ -460,7 +460,18 @@ button {
   position: relative;
 }
 
+/*
+ * Taken out of flow like the photograph that may replace it. Left in flow the
+ * glyph counts as content and the block sizes around it, while a block
+ * holding an absolutely positioned photo has no content at all -- so the two
+ * resolved to different heights and the grid went ragged. Neither contributes
+ * now, and aspect-ratio alone decides, identically for both.
+ */
 .tile__art svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: 38%;
   max-width: 3.25rem;
   height: auto;
@@ -674,6 +685,40 @@ button {
   font-size: 0.8125rem;
   font-weight: 700;
   color: var(--best);
+}
+
+/* --------------------------------------------------------------- preview */
+
+.preview {
+  display: block;
+  width: 100%;
+  max-height: 11rem;
+  object-fit: cover;
+  border-radius: var(--r-md);
+  border: 1px solid var(--rule);
+  margin-bottom: 0.8rem;
+}
+
+/*
+ * A real photograph replaces the category block and fills it exactly, so a
+ * card with a picture and one without are the same shape and the grid stays
+ * even. Positioned rather than sized: the block centres its contents for the
+ * glyph's sake, and a centred image keeps its own proportions instead of
+ * filling the space.
+ */
+.tile__art img,
+.row__art img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.row__art {
+  position: relative;
+  overflow: hidden;
 }
 
 /* ---------------------------------------------------------------- contact */

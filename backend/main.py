@@ -18,12 +18,14 @@ so a slow or broken SMTP server can never delay or fail an API response.
 
 import os
 import json
+import base64
 import secrets
 import hashlib
 import sqlite3
 from typing import Optional, List
 
 from fastapi import FastAPI, Depends, Header, HTTPException, BackgroundTasks, Query
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 
@@ -80,6 +82,8 @@ CREATE TABLE IF NOT EXISTS products (
     specs       TEXT,
     price       REAL NOT NULL,
     stock       INTEGER DEFAULT 1,
+    image       BLOB,
+    image_type  TEXT,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -167,6 +171,13 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
         if "phone" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+        pcols = [r["name"] for r in conn.execute("PRAGMA table_info(products)")]
+        if "image" not in pcols:
+            # The bytes themselves, not a path: the host's disk is wiped on
+            # restart, so a file on it would outlive nothing. Kept out of the
+            # listing JSON and served from its own endpoint instead.
+            conn.execute("ALTER TABLE products ADD COLUMN image BLOB")
+            conn.execute("ALTER TABLE products ADD COLUMN image_type TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -318,6 +329,35 @@ def normalize_phone(value: Optional[str]) -> Optional[str]:
     return ("+" if plus else "") + digits
 
 
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+
+
+def decode_data_url(value: Optional[str]):
+    """
+    Turn "data:image/jpeg;base64,..." into (bytes, media type).
+
+    Returns (None, None) for no image. Raises for anything that is not one of
+    the three formats every browser can both produce and display -- a stored
+    SVG would be a script this server hands back to whoever asks for it.
+    """
+    if value is None or not value.strip():
+        return None, None
+    head, _, payload = value.partition(",")
+    if not payload or not head.startswith("data:") or ";base64" not in head:
+        raise HTTPException(400, "Image must be a base64 data URL")
+    media = head[5:].split(";", 1)[0].lower()
+    if media not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(400, "Image must be a JPEG, PNG or WebP")
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except Exception:
+        raise HTTPException(400, "Image is not valid base64")
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "Image is too large; keep it under 2 MB")
+    return raw, media
+
+
 def public_user(user: dict) -> dict:
     """Never let the password hash out of the building."""
     return {
@@ -373,6 +413,11 @@ class ProductIn(BaseModel):
     specs: Optional[str] = Field(default=None, max_length=1000)
     price: float = Field(ge=0)
     stock: int = Field(default=1, ge=0)
+    # A data URL, as produced by the browser after it has shrunk the picture:
+    # "data:image/jpeg;base64,...". Generous ceiling -- the client aims for
+    # around a tenth of this, and anything larger is a client that skipped
+    # the resize rather than a photograph that needed the room.
+    image: Optional[str] = Field(default=None, max_length=3_000_000)
 
 
 class OfferIn(BaseModel):
@@ -627,21 +672,25 @@ def add_product(data: ProductIn, conn: sqlite3.Connection = Depends(get_db),
                 user: dict = Depends(require_shop)):
     if data.category not in CATEGORIES:
         raise HTTPException(400, "Unknown category")
+    blob, media = decode_data_url(data.image)
     cur = conn.execute(
         "INSERT INTO products (shop_id, name, category, description, specs, "
-        "price, stock) VALUES (?,?,?,?,?,?,?)",
+        "price, stock, image, image_type) VALUES (?,?,?,?,?,?,?,?,?)",
         (user["id"], data.name.strip(), data.category, data.description,
-         data.specs, data.price, data.stock),
+         data.specs, data.price, data.stock, blob, media),
     )
     conn.commit()
-    return {"ok": True, "id": cur.lastrowid}
+    return {"ok": True, "id": cur.lastrowid, "has_image": blob is not None}
 
 
 @app.get("/api/products/mine", tags=["catalog"])
 def my_products(conn: sqlite3.Connection = Depends(get_db),
                 user: dict = Depends(require_shop)):
-    rows = conn.execute("SELECT * FROM products WHERE shop_id = ? "
-                        "ORDER BY id DESC", (user["id"],)).fetchall()
+    rows = conn.execute(
+        "SELECT id, shop_id, name, category, description, specs, price, stock, "
+        "       created_at, (image IS NOT NULL) AS has_image "
+        "FROM products WHERE shop_id = ? ORDER BY id DESC", (user["id"],)
+    ).fetchall()
     return {"products": [dict(r) for r in rows]}
 
 
@@ -650,7 +699,10 @@ def browse_products(q: Optional[str] = None, category: Optional[str] = None,
                     area: Optional[str] = None, limit: int = Query(100, le=500),
                     conn: sqlite3.Connection = Depends(get_db)):
     """Public product browse. No auth: students compare before signing up."""
-    sql = ("SELECT p.*, u.shop_name, u.name AS shop_contact, u.area "
+    sql = ("SELECT p.id, p.shop_id, p.name, p.category, p.description, p.specs, "
+           "       p.price, p.stock, p.created_at, "
+           "       (p.image IS NOT NULL) AS has_image, "
+           "       u.shop_name, u.name AS shop_contact, u.area "
            "FROM products p JOIN users u ON u.id = p.shop_id WHERE 1=1")
     params: List = []
     if q:
@@ -667,6 +719,25 @@ def browse_products(q: Optional[str] = None, category: Optional[str] = None,
 
     rows = conn.execute(sql, params).fetchall()
     return {"products": [dict(r) for r in rows]}
+
+
+@app.get("/api/products/{product_id}/image", tags=["catalog"])
+def product_image(product_id: int, conn: sqlite3.Connection = Depends(get_db)):
+    """
+    One product's photograph. Public, like the listing it belongs to, and on
+    its own URL so the browser caches it instead of refetching with every
+    search.
+    """
+    row = conn.execute(
+        "SELECT image, image_type FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+    if row is None or row["image"] is None:
+        raise HTTPException(404, "No image for that product")
+    return Response(
+        content=row["image"],
+        media_type=row["image_type"] or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.post("/api/offers", tags=["offers"])

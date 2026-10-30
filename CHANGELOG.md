@@ -6,6 +6,24 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-30
+
+### Fixed
+
+- **Reopening the app signed you out**, and since the tabs are built from the
+  signed-in role, Chats and Post were simply absent. It read as missing
+  features rather than as a logout. The token was in `sessionStorage`, which
+  a WebView discards whenever Android reclaims the process; it now lives in
+  `localStorage`.
+
+### Added
+
+- **Shops can put a photo on a listing.** Shrunk in the browser before upload
+  -- a phone camera's four megabytes becomes about twenty kilobytes -- then
+  stored as a blob and served from its own URL, so a page of listings stays
+  small and browsers cache the pictures. Listings without one keep the
+  category tile.
+
 ## [1.3.0] - 2026-10-30
 
 ### Added
@@ -117,7 +135,8 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.4.0
 [1.3.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.3.0
 [1.2.2]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.2
 [1.2.1]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.1
