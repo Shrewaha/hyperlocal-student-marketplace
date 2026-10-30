@@ -6,6 +6,18 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-30
+
+### Fixed
+
+- **There was no way to post a request.** The browse screen told people to
+  post what they needed and showed no control for it; the only route was the
+  Post tab, which exists for students alone. Signed out, or signed in as a
+  shop, you were instructed to do something the interface gave you no way to
+  do. Browse now carries a button that goes where it should for whoever is
+  reading it, and a shop is told what it does instead of being told to post.
+- Empty screens offer a button rather than instructions pointing at a tab.
+
 ## [1.2.1] - 2026-10-30
 
 ### Fixed
@@ -91,7 +103,8 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.2
 [1.2.1]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.1
 [1.2.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.0
 [1.1.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.1.0
