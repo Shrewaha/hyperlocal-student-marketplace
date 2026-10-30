@@ -6,6 +6,8 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-30
+
 ### Added
 
 - **Browser client** (`web/`) against the same JSON API as the desktop app:
@@ -63,5 +65,6 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.1.0
 [1.0.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.0.0
