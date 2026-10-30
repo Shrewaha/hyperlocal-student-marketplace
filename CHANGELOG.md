@@ -6,6 +6,20 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The client is now built phone-first**, in the shape quick-commerce apps
+  have taught people to expect: a pinned search bar, scrolling category chips,
+  a two-across card grid, and tabs along the bottom that become ordinary
+  header navigation on a wide screen. New palette throughout.
+- **Categories carry a colour and a glyph.** The API has no product images, so
+  rather than leave a grey rectangle where a photo would be, each category
+  owns a saturated block — a decision rather than a gap.
+- **The comparison screen leads with the cheapest offer** as a card of its
+  own, with the rest listed under it, and a sticky bar carries the best price
+  above the tabs — where a grocery app would keep the cart total.
+- Search filters as you type instead of only on submit.
+
 ## [1.1.0] - 2026-10-30
 
 ### Added
