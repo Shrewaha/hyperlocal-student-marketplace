@@ -3,6 +3,10 @@
 
     <!-- The interface is bundled, but offers and sign-in come from the API. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Only for the "Use my location" button on a shop's profile, and only
+         asked for at the moment it is pressed. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <application
         android:allowBackup="true"

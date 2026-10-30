@@ -79,6 +79,11 @@
               stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 11.5a8 8 0 01-11.6 7.1L4 20.5l1.9-5.1A8 8 0 1121 11.5z" />
       </symbol>
+      <symbol id="t-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 8a6 6 0 10-12 0c0 5-2 6-2 6h16s-2-1-2-6z" />
+        <path d="M10.3 21a2 2 0 003.4 0" />
+      </symbol>
       <symbol id="t-user" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="8" r="4" />
@@ -99,6 +104,10 @@
             HyperLocal
           </a>
           <span class="pitch" id="pitch">Offers in <b>minutes</b></span>
+          <button class="bell" id="bell" type="button" aria-label="Notifications" hidden>
+            <svg aria-hidden="true"><use href="#t-bell" /></svg>
+            <span class="bell__dot" id="bell-dot" hidden></span>
+          </button>
           <!--
             Lives in the header so that on a wide screen it is ordinary
             navigation sitting where navigation belongs. On a phone it is
@@ -398,12 +407,79 @@
         </p>
       </section>
 
+      <!-- ===================================================== notifications -->
+      <section id="view-alerts" hidden>
+        <div class="hero">
+          <h1>Notifications</h1>
+          <p>Offers, messages and requests, newest first.</p>
+        </div>
+        <ul class="rows" id="alerts"></ul>
+        <div class="empty" id="alerts-empty" hidden></div>
+      </section>
+
       <!-- ============================================================ account -->
       <section id="view-account" hidden>
         <div class="hero">
           <h1 id="account-name">Account</h1>
           <p id="account-meta"></p>
         </div>
+
+        <div class="section__head"><h2>Your profile</h2></div>
+        <div class="card">
+          <form id="profile-form">
+            <label class="field">
+              <span>Name</span>
+              <input name="name" maxlength="120" required />
+            </label>
+
+            <label class="field" id="profile-shop-name" hidden>
+              <span>Shop name</span>
+              <input name="shop_name" maxlength="160" />
+            </label>
+
+            <div class="row2">
+              <label class="field">
+                <span>Area</span>
+                <input name="area" list="known-areas" maxlength="120" />
+              </label>
+              <label class="field" id="profile-phone" hidden>
+                <span>Phone</span>
+                <input name="phone" type="tel" inputmode="tel" maxlength="32" />
+              </label>
+            </div>
+
+            <label class="field" id="profile-address" hidden>
+              <span>Address</span>
+              <textarea name="address" maxlength="400"
+                placeholder="Shop 12, Civil Lines, Ayodhya"></textarea>
+            </label>
+
+            <label class="field" id="profile-about" hidden>
+              <span>About</span>
+              <input name="about" maxlength="600"
+                placeholder="Electronics and lab components since 2008" />
+            </label>
+
+            <div class="field" id="profile-location" hidden>
+              <span>Location</span>
+              <div class="actions">
+                <button class="btn btn--sm" type="button" id="locate">Use my location</button>
+                <a class="btn btn--sm" id="map-link" target="_blank" rel="noopener" hidden
+                  >Open in Maps</a
+                >
+                <button class="btn btn--sm btn--ghost" type="button" id="clear-location" hidden>
+                  Remove
+                </button>
+              </div>
+              <small class="hint-line" id="location-hint"></small>
+            </div>
+
+            <button class="btn btn--primary btn--block" type="submit">Save profile</button>
+            <p class="msg" id="profile-msg"></p>
+          </form>
+        </div>
+
+        <div class="section__head"><h2>Settings</h2></div>
         <div class="card">
           <div class="actions">
             <button class="btn" id="nav-api">Server address</button>
@@ -431,6 +507,8 @@
         <div class="bestbar__price" id="bestbar-price"></div>
       </div>
     </div>
+
+    <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
     <!-- =========================================================== sheets -->
     <dialog id="offer-dialog">

@@ -46,7 +46,9 @@
     categories: [],
     areas: [],
     unread: 0,
+    alerts: 0,
     thread: null,
+    location: null,
     category: "", // active chip on the browse screen
     myAreaOnly: false,
     view: "browse",
@@ -92,6 +94,23 @@
     use.setAttribute("href", "#" + symbolId);
     svg.appendChild(use);
     return svg;
+  }
+
+  /* --------------------------------------------------------------- toasts */
+
+  /*
+   * Confirmations used to be a line of text under whichever form produced
+   * them, which on a phone is frequently below the fold -- people pressed
+   * the button, saw nothing move, and pressed it again. A toast is seen.
+   */
+  function toast(message, tone, ms) {
+    var box = $("#toasts");
+    if (!box) return;
+    var node = el("div", "toast" + (tone ? " toast--" + tone : ""), message);
+    box.appendChild(node);
+    setTimeout(function () {
+      node.remove();
+    }, ms || 4000);
   }
 
   /* --------------------------------------------------------- categories */
@@ -341,6 +360,7 @@
     "compare",
     "chats",
     "thread",
+    "alerts",
     "account",
   ];
 
@@ -368,9 +388,12 @@
     if (name === "requests") loadOpenRequests();
     if (name === "offers-mine") loadMyOffers().then(loadMyProducts).catch(function () {});
     if (name === "chats") loadThreads();
+    if (name === "alerts") loadAlerts();
     if (name === "account") paintAccount();
-    // Anywhere else, a quiet check so a reply that arrived meanwhile shows up.
+    // Anywhere else, a quiet check so anything that arrived meanwhile shows up.
     if (name !== "chats" && name !== "thread") refreshUnread();
+    if (name !== "alerts") refreshAlerts();
+    show($("#bell"), !!state.user);
   }
 
   /*
@@ -414,13 +437,61 @@
 
   function paintAccount() {
     if (!state.user) return;
-    text($("#account-name"), state.user.shop_name || state.user.name);
+    var u = state.user;
+    var isShop = u.role === "shop";
+
+    text($("#account-name"), u.shop_name || u.name);
     text(
       $("#account-meta"),
-      [state.user.role === "shop" ? "Shop" : "Student", state.user.area, state.user.email]
-        .filter(Boolean)
-        .join(" · ")
+      [isShop ? "Shop" : "Student", u.area, u.email].filter(Boolean).join(" · ")
     );
+
+    /* Address, phone, about and a location are a shop's shopfront: they tell
+       a student where to go and who they are dealing with. A student needs
+       none of them to post a request, so asking would be noise. */
+    show($("#profile-shop-name"), isShop);
+    show($("#profile-phone"), isShop);
+    show($("#profile-address"), isShop);
+    show($("#profile-about"), isShop);
+    show($("#profile-location"), isShop);
+
+    var f = $("#profile-form").elements;
+    f.name.value = u.name || "";
+    f.area.value = u.area || "";
+    if (isShop) {
+      f.shop_name.value = u.shop_name || "";
+      f.phone.value = u.phone || "";
+      f.address.value = u.address || "";
+      f.about.value = u.about || "";
+    }
+
+    state.location =
+      u.lat !== null && u.lat !== undefined && u.lng !== null && u.lng !== undefined
+        ? { lat: u.lat, lng: u.lng }
+        : null;
+    paintLocation();
+  }
+
+  function paintLocation() {
+    var hint = $("#location-hint");
+    var link = $("#map-link");
+    var clear = $("#clear-location");
+
+    if (!state.location) {
+      hint.className = "hint-line";
+      hint.textContent = "Not set. Students will see your address only.";
+      show(link, false);
+      show(clear, false);
+      return;
+    }
+
+    var ll = state.location.lat.toFixed(5) + ", " + state.location.lng.toFixed(5);
+    hint.className = "hint-line hint-line--ok";
+    hint.textContent = "Saved pin at " + ll;
+    link.href = "https://www.google.com/maps/search/?api=1&query=" +
+      encodeURIComponent(state.location.lat + "," + state.location.lng);
+    show(link, true);
+    show(clear, true);
   }
 
   /* ------------------------------------------------------------ catalogue */
@@ -654,6 +725,7 @@
     store(localStorage, TOKEN_KEY, data.token);
     go("home");
     refreshUnread(true);
+    refreshAlerts(true);
   }
 
   function signIn(email, password) {
@@ -1019,7 +1091,115 @@
       box.appendChild(mail);
     }
 
+    /* Where to actually go, when the shop has said. */
+    if (offer.lat !== null && offer.lat !== undefined &&
+        offer.lng !== null && offer.lng !== undefined) {
+      var map = el("a", "btn", "Directions");
+      map.href = "https://www.google.com/maps/search/?api=1&query=" +
+        encodeURIComponent(offer.lat + "," + offer.lng);
+      map.target = "_blank";
+      map.rel = "noopener";
+      box.appendChild(map);
+    }
+
     return box;
+  }
+
+  /* --------------------------------------------------------------- alerts */
+
+  var lastAlertCheck = 0;
+
+  function refreshAlerts(force) {
+    if (!state.user) {
+      state.alerts = 0;
+      show($("#bell-dot"), false);
+      return Promise.resolve();
+    }
+    var now = Date.now();
+    if (!force && now - lastAlertCheck < 15000) return Promise.resolve();
+    lastAlertCheck = now;
+
+    return request("/api/notifications?limit=1")
+      .then(function (data) {
+        state.alerts = data.unread || 0;
+        show($("#bell-dot"), state.alerts > 0);
+      })
+      .catch(function () {});
+  }
+
+  var ALERT_LABEL = {
+    offer: "OFFER",
+    message: "MESSAGE",
+    request: "REQUEST",
+  };
+
+  function loadAlerts() {
+    var list = $("#alerts");
+    var empty = $("#alerts-empty");
+    list.textContent = "";
+    show(empty, false);
+
+    return request("/api/notifications")
+      .then(function (data) {
+        var items = data.notifications || [];
+        if (!items.length) {
+          emptyState(
+            empty,
+            "Nothing yet.",
+            state.user && state.user.role === "shop"
+              ? "You will hear when a student in your area posts a request."
+              : "You will hear when a shop answers one of your requests."
+          );
+        } else {
+          items.forEach(function (n) {
+            var li = el("li", n.read ? null : "alert--unread");
+            var main = el("div", "row__main");
+            main.appendChild(el("div", "alert__kind", ALERT_LABEL[n.kind] || "UPDATE"));
+            main.appendChild(el("div", "row__name", n.title));
+            if (n.body) main.appendChild(el("div", "row__meta", n.body));
+
+            /* Each one leads where it came from, so the feed is a way in
+               rather than only a record. */
+            if (n.kind === "message" && n.request_id && n.shop_id) {
+              var open = el("button", "btn btn--sm", "Open chat");
+              open.type = "button";
+              open.addEventListener("click", function () {
+                openThread(n.request_id, n.shop_id, n.title);
+              });
+              var side = el("div", "row__side");
+              side.appendChild(open);
+              li.appendChild(main);
+              li.appendChild(side);
+            } else if (n.kind === "offer" && n.request_id) {
+              var cmp = el("button", "btn btn--sm btn--primary", "Compare");
+              cmp.type = "button";
+              cmp.addEventListener("click", function () {
+                openOffers(n.request_id);
+              });
+              var side2 = el("div", "row__side");
+              side2.appendChild(cmp);
+              li.appendChild(main);
+              li.appendChild(side2);
+            } else {
+              li.appendChild(main);
+            }
+            list.appendChild(li);
+          });
+        }
+
+        /* Opening the feed is the act of reading it. */
+        if (data.unread > 0) {
+          return request("/api/notifications/read", { method: "POST" }).then(function () {
+            state.alerts = 0;
+            show($("#bell-dot"), false);
+          });
+        }
+        state.alerts = 0;
+        show($("#bell-dot"), false);
+      })
+      .catch(function (err) {
+        emptyState(empty, "Could not load notifications.", err.message);
+      });
   }
 
   /* ------------------------------------------------------------- messages */
@@ -1171,7 +1351,9 @@
     state.token = null;
     state.user = null;
     state.unread = 0;
+    state.alerts = 0;
     state.thread = null;
+    state.location = null;
     store(localStorage, TOKEN_KEY, null);
     go("browse");
   });
@@ -1288,6 +1470,7 @@
           /* Not an error -- the request is saved and any shop browsing can
              still answer it. But saying so beats an empty offers list that
              never explains itself. */
+          toast("Posted, but no shops are registered in " + where + " yet.", "warn", 6000);
           msg.className = "msg msg--warn";
           text(
             msg,
@@ -1296,6 +1479,12 @@
               " yet. It is still visible to every shop browsing open requests."
           );
         } else {
+          toast(
+            n === 1
+              ? "Posted. 1 shop in " + where + " was notified."
+              : "Posted. " + n + " shops in " + where + " were notified.",
+            "ok"
+          );
           msg.className = "msg msg--ok";
           text(
             msg,
@@ -1365,6 +1554,7 @@
         text($("#image-hint"), "");
         msg.className = "msg msg--ok";
         text(msg, "Listed.");
+        toast("Listing added.", "ok");
         loadMyProducts();
       },
       function (err) {
@@ -1390,10 +1580,11 @@
       },
     }).then(
       function () {
+        toast("Offer sent to the student.", "ok");
         loadOpenRequests().catch(function () {});
       },
       function (err) {
-        window.alert(err.message);
+        toast(err.message, "bad", 6000);
       }
     );
   });
@@ -1420,8 +1611,90 @@
     }).then(loadThread, function (err) {
       // Put the text back rather than losing what they typed.
       input.value = body;
-      window.alert(err.message);
+      toast(err.message, "bad", 6000);
     });
+  });
+
+  $("#bell").addEventListener("click", function () {
+    go("alerts");
+  });
+
+  $("#locate").addEventListener("click", function () {
+    var hint = $("#location-hint");
+    if (!navigator.geolocation) {
+      hint.className = "hint-line hint-line--warn";
+      hint.textContent = "This device cannot report a location.";
+      return;
+    }
+    hint.className = "hint-line";
+    hint.textContent = "Finding you\u2026";
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {
+        state.location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        paintLocation();
+        toast("Location captured. Save the profile to keep it.", "ok");
+      },
+      function (err) {
+        hint.className = "hint-line hint-line--warn";
+        /* Denial is the common case and is not a fault, so it reads as a
+           choice rather than an error. */
+        hint.textContent =
+          err.code === 1
+            ? "Permission refused. You can still give an address above."
+            : "Could not get a location. You can still give an address above.";
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+    );
+  });
+
+  $("#clear-location").addEventListener("click", function () {
+    state.location = null;
+    paintLocation();
+    toast("Pin removed. Save the profile to confirm.", "warn");
+  });
+
+  $("#profile-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var f = e.target.elements;
+    var isShop = state.user && state.user.role === "shop";
+    var msg = $("#profile-msg");
+    msg.className = "msg";
+    text(msg, "Saving\u2026");
+
+    var body = {
+      name: f.name.value.trim(),
+      area: f.area.value.trim(),
+    };
+    if (isShop) {
+      body.shop_name = f.shop_name.value.trim();
+      body.phone = f.phone.value.trim();
+      body.address = f.address.value.trim();
+      body.about = f.about.value.trim();
+      /* An absent lat and lng means "leave the pin alone", which is right
+         for a form that edits the address and nothing else. Removing one
+         therefore has to be said outright. */
+      if (state.location) {
+        body.lat = state.location.lat;
+        body.lng = state.location.lng;
+      } else if (state.user.lat !== null && state.user.lat !== undefined) {
+        body.clear_location = true;
+      }
+    }
+
+    request("/api/me", { method: "PATCH", body: body }).then(
+      function (user) {
+        state.user = user;
+        text(msg, "");
+        paintAccount();
+        paintTabs();
+        toast("Profile saved.", "ok");
+      },
+      function (err) {
+        msg.className = "msg msg--bad";
+        text(msg, err.message);
+        toast(err.message, "bad");
+      }
+    );
   });
 
   $("#area-toggle").addEventListener("click", function () {
@@ -1431,7 +1704,10 @@
   });
 
   document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) refreshUnread(true);
+    if (!document.hidden) {
+      refreshUnread(true);
+      refreshAlerts(true);
+    }
   });
 
   /* ----------------------------------------------------------------- boot */
@@ -1450,6 +1726,8 @@
     .then(restoreSession)
     .then(function () {
       go(state.user ? "home" : "browse");
-      return refreshUnread(true);
+      return refreshUnread(true).then(function () {
+        return refreshAlerts(true);
+      });
     });
 })();
