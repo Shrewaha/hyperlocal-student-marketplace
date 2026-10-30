@@ -112,9 +112,33 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- A conversation is a request paired with one shop. Two shops answering the
+-- same request are two separate threads, and the student is whoever owns the
+-- request, so the pair alone identifies both sides.
+CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id INTEGER NOT NULL REFERENCES requests(id),
+    shop_id    INTEGER NOT NULL REFERENCES users(id),
+    sender_id  INTEGER NOT NULL REFERENCES users(id),
+    body       TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- How far each person has read in each thread. Storing the furthest message
+-- id rather than a count means unread stays correct no matter how many
+-- messages arrive between visits.
+CREATE TABLE IF NOT EXISTS thread_reads (
+    request_id   INTEGER NOT NULL,
+    shop_id      INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL,
+    last_read_id INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (request_id, shop_id, user_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_offers_request  ON offers(request_id, price);
 CREATE INDEX IF NOT EXISTS idx_requests_student ON requests(student_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_products_shop   ON products(shop_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(request_id, shop_id, id);
 """
 
 
@@ -138,6 +162,11 @@ def init_db():
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        # Added after the first release, so existing databases need it too.
+        # Idempotent: checking the columns is cheaper than catching the error.
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
+        if "phone" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -271,12 +300,31 @@ def count_shops_in_area(conn: sqlite3.Connection, area: Optional[str]) -> int:
     return int(row["n"]) if row else 0
 
 
+def normalize_phone(value: Optional[str]) -> Optional[str]:
+    """
+    Keep the digits and a leading +, drop the spaces, dashes and brackets
+    people type. Stored this way so a tel: or WhatsApp link built from it
+    works without the client having to clean it up first.
+    """
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    plus = raw.startswith("+")
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return None
+    return ("+" if plus else "") + digits
+
+
 def public_user(user: dict) -> dict:
     """Never let the password hash out of the building."""
     return {
         "id": user["id"], "name": user["name"], "email": user["email"],
         "role": user["role"], "area": user["area"],
         "shop_name": user["shop_name"],
+        "phone": user.get("phone"),
         "notify_email": bool(user.get("notify_email", 1) in (1, None)),
     }
 
@@ -292,6 +340,17 @@ class RegisterIn(BaseModel):
     role: str
     area: Optional[str] = Field(default=None, max_length=120)
     shop_name: Optional[str] = Field(default=None, max_length=160)
+    # Shops only. It is shown to a student on that shop's offers, which is
+    # how the two actually reach each other once a price is agreed.
+    phone: Optional[str] = Field(default=None, max_length=32)
+
+
+class MessageIn(BaseModel):
+    request_id: int
+    # Which shop's thread. A shop sending to a student may leave this out --
+    # the thread is its own.
+    shop_id: Optional[int] = None
+    body: str = Field(min_length=1, max_length=2000)
 
 
 class LoginIn(BaseModel):
@@ -345,11 +404,12 @@ def register(data: RegisterIn, background: BackgroundTasks,
         raise HTTPException(409, "An account with that email already exists")
 
     cur = conn.execute(
-        "INSERT INTO users (name, email, password, role, area, shop_name) "
-        "VALUES (?,?,?,?,?,?)",
+        "INSERT INTO users (name, email, password, role, area, shop_name, phone) "
+        "VALUES (?,?,?,?,?,?,?)",
         (data.name.strip(), email, hash_password(data.password), data.role,
          normalize_area(data.area),
-         (data.shop_name or "").strip() or None),
+         (data.shop_name or "").strip() or None,
+         normalize_phone(data.phone) if data.role == "shop" else None),
     )
     user_id = cur.lastrowid
     conn.commit()                       # commit BEFORE queueing the email
@@ -514,8 +574,12 @@ def request_offers(request_id: int,
     if req is None:
         raise HTTPException(404, "Request not found")
 
+    # Contact details ride along with the offers. A student who has just been
+    # shown the cheapest price needs a way to act on it, and sending them back
+    # to a separate lookup for a phone number is where that stalls.
     rows = conn.execute(
-        "SELECT o.*, u.shop_name, u.name AS shop_contact, u.area "
+        "SELECT o.*, u.id AS shop_user_id, u.shop_name, u.name AS shop_contact, "
+        "       u.area, u.phone, u.email AS shop_email "
         "FROM offers o JOIN users u ON u.id = o.shop_id "
         "WHERE o.request_id = ? ORDER BY o.price ASC, o.id ASC",
         (request_id,)
@@ -527,7 +591,11 @@ def request_offers(request_id: int,
         price = float(r["price"])
         offers.append({
             "id": r["id"],
+            "shop_id": r["shop_user_id"],
             "shop_name": r["shop_name"] or r["shop_contact"],
+            "shop_contact": r["shop_contact"],
+            "phone": r["phone"],
+            "email": r["shop_email"],
             "area": r["area"],
             "product_name": r["product_name"],
             "specs": r["specs"],
@@ -642,6 +710,163 @@ def my_offers(conn: sqlite3.Connection = Depends(get_db),
                         and float(d["price"]) <= float(d["best_price"]) + 1e-9)
         offers.append(d)
     return {"offers": offers}
+
+
+# ==========================================================================
+# Messages
+# ==========================================================================
+#
+# A thread is a request paired with one shop. The student is whoever owns the
+# request, so that pair names both sides without storing either again, and
+# two shops answering the same request stay in separate conversations.
+
+
+def thread_parties(conn: sqlite3.Connection, request_id: int, shop_id: int):
+    """The student and shop in a thread, or None if the pair is not real."""
+    row = conn.execute(
+        "SELECT r.student_id, s.id AS shop_id, s.role "
+        "FROM requests r JOIN users s ON s.id = ? "
+        "WHERE r.id = ?", (shop_id, request_id)
+    ).fetchone()
+    if row is None or row["role"] != "shop":
+        return None
+    return row["student_id"], row["shop_id"]
+
+
+def may_use_thread(user: dict, student_id: int, shop_id: int) -> bool:
+    """Only the two people in a conversation may read or add to it."""
+    return user["id"] == student_id or user["id"] == shop_id
+
+
+@app.get("/api/messages/threads", tags=["messages"])
+def my_threads(conn: sqlite3.Connection = Depends(get_db),
+               user: dict = Depends(get_current_user)):
+    """Every conversation I am part of, most recently active first."""
+    if user["role"] == "shop":
+        where, params = "m.shop_id = ?", [user["id"]]
+    else:
+        where, params = "r.student_id = ?", [user["id"]]
+
+    rows = conn.execute(
+        "SELECT m.request_id, m.shop_id, r.title, "
+        "       s.shop_name, s.name AS shop_contact, "
+        "       u.name AS student_name, "
+        "       MAX(m.id) AS last_id, COUNT(*) AS total, "
+        "       (SELECT body FROM messages x WHERE x.request_id = m.request_id "
+        "        AND x.shop_id = m.shop_id ORDER BY x.id DESC LIMIT 1) AS last_body, "
+        "       (SELECT created_at FROM messages x WHERE x.request_id = m.request_id "
+        "        AND x.shop_id = m.shop_id ORDER BY x.id DESC LIMIT 1) AS last_at, "
+        "       COALESCE((SELECT last_read_id FROM thread_reads t "
+        "                 WHERE t.request_id = m.request_id AND t.shop_id = m.shop_id "
+        "                 AND t.user_id = ?), 0) AS last_read "
+        "FROM messages m "
+        "JOIN requests r ON r.id = m.request_id "
+        "JOIN users s ON s.id = m.shop_id "
+        "JOIN users u ON u.id = r.student_id "
+        "WHERE " + where + " "
+        "GROUP BY m.request_id, m.shop_id "
+        "ORDER BY last_id DESC",
+        [user["id"]] + params
+    ).fetchall()
+
+    threads = []
+    for r in rows:
+        unread = conn.execute(
+            "SELECT COUNT(*) AS n FROM messages "
+            "WHERE request_id = ? AND shop_id = ? AND id > ? AND sender_id <> ?",
+            (r["request_id"], r["shop_id"], r["last_read"], user["id"])
+        ).fetchone()["n"]
+        threads.append({
+            "request_id": r["request_id"],
+            "shop_id": r["shop_id"],
+            "title": r["title"],
+            # Whoever you are talking to, which is the other side of the pair.
+            "with_name": (r["student_name"] if user["role"] == "shop"
+                          else (r["shop_name"] or r["shop_contact"])),
+            "last_body": r["last_body"],
+            "last_at": r["last_at"],
+            "messages": r["total"],
+            "unread": unread,
+        })
+    return {"threads": threads, "unread_total": sum(t["unread"] for t in threads)}
+
+
+@app.get("/api/messages/thread", tags=["messages"])
+def read_thread(request_id: int, shop_id: int,
+                conn: sqlite3.Connection = Depends(get_db),
+                user: dict = Depends(get_current_user)):
+    """One conversation. Reading it marks it read, for this user only."""
+    parties = thread_parties(conn, request_id, shop_id)
+    if parties is None:
+        raise HTTPException(404, "No such conversation")
+    student_id, shop = parties
+    if not may_use_thread(user, student_id, shop):
+        raise HTTPException(403, "That conversation is not yours")
+
+    rows = conn.execute(
+        "SELECT m.id, m.sender_id, m.body, m.created_at, u.name AS sender_name "
+        "FROM messages m JOIN users u ON u.id = m.sender_id "
+        "WHERE m.request_id = ? AND m.shop_id = ? ORDER BY m.id ASC",
+        (request_id, shop_id)
+    ).fetchall()
+
+    if rows:
+        conn.execute(
+            "INSERT INTO thread_reads (request_id, shop_id, user_id, last_read_id) "
+            "VALUES (?,?,?,?) "
+            "ON CONFLICT(request_id, shop_id, user_id) "
+            "DO UPDATE SET last_read_id = excluded.last_read_id",
+            (request_id, shop_id, user["id"], rows[-1]["id"])
+        )
+        conn.commit()
+
+    req = conn.execute("SELECT title, budget FROM requests WHERE id = ?",
+                       (request_id,)).fetchone()
+    return {
+        "request_id": request_id,
+        "shop_id": shop_id,
+        "title": req["title"] if req else None,
+        "budget": req["budget"] if req else None,
+        "messages": [{
+            "id": r["id"],
+            "body": r["body"],
+            "created_at": r["created_at"],
+            "sender_name": r["sender_name"],
+            "mine": r["sender_id"] == user["id"],
+        } for r in rows],
+    }
+
+
+@app.post("/api/messages", tags=["messages"])
+def send_message(data: MessageIn,
+                 conn: sqlite3.Connection = Depends(get_db),
+                 user: dict = Depends(get_current_user)):
+    # A shop is always its own side of the thread, so it need not say which.
+    shop_id = user["id"] if user["role"] == "shop" else data.shop_id
+    if shop_id is None:
+        raise HTTPException(400, "shop_id is required")
+
+    parties = thread_parties(conn, data.request_id, shop_id)
+    if parties is None:
+        raise HTTPException(404, "No such conversation")
+    student_id, shop = parties
+    if not may_use_thread(user, student_id, shop):
+        raise HTTPException(403, "That conversation is not yours")
+
+    cur = conn.execute(
+        "INSERT INTO messages (request_id, shop_id, sender_id, body) VALUES (?,?,?,?)",
+        (data.request_id, shop_id, user["id"], data.body.strip()),
+    )
+    # Your own message is not something you have to come back and read.
+    conn.execute(
+        "INSERT INTO thread_reads (request_id, shop_id, user_id, last_read_id) "
+        "VALUES (?,?,?,?) "
+        "ON CONFLICT(request_id, shop_id, user_id) "
+        "DO UPDATE SET last_read_id = excluded.last_read_id",
+        (data.request_id, shop_id, user["id"], cur.lastrowid)
+    )
+    conn.commit()
+    return {"ok": True, "id": cur.lastrowid, "shop_id": shop_id}
 
 
 # ==========================================================================

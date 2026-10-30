@@ -6,6 +6,20 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-30
+
+### Added
+
+- **A student can now reach a shop.** Until now you could find the cheapest
+  offer and go no further: the shop's name was all you had. Offers now carry
+  WhatsApp, Call, Message and Email.
+- **Shops give a phone number at signup**, shown to students on their offers.
+  Stored as digits so a `tel:` or WhatsApp link works straight from it.
+- **In-app messaging.** A conversation is a request paired with one shop, so
+  two shops answering the same request stay in separate threads. Unread
+  counts ride on the Chats tab and clear when you read.
+- `GET /api/messages/threads`, `GET /api/messages/thread`, `POST /api/messages`.
+
 ## [1.2.2] - 2026-10-30
 
 ### Fixed
@@ -103,7 +117,8 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.3.0
 [1.2.2]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.2
 [1.2.1]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.1
 [1.2.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.2.0

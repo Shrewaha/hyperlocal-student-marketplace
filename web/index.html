@@ -75,6 +75,10 @@
               stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
         <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
       </symbol>
+      <symbol id="t-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 11.5a8 8 0 01-11.6 7.1L4 20.5l1.9-5.1A8 8 0 1121 11.5z" />
+      </symbol>
       <symbol id="t-user" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="8" r="4" />
@@ -188,10 +192,22 @@
                 <small class="hint-line" id="area-hint"></small>
               </label>
 
-              <label class="field" id="shop-name-field" hidden>
-                <span>Shop name</span>
-                <input name="shop_name" />
-              </label>
+              <div id="shop-name-field" hidden>
+                <label class="field">
+                  <span>Shop name</span>
+                  <input name="shop_name" />
+                </label>
+                <label class="field">
+                  <span>Phone (shown to students on your offers)</span>
+                  <input
+                    name="phone"
+                    type="tel"
+                    inputmode="tel"
+                    autocomplete="tel"
+                    placeholder="+91 98765 43210"
+                  />
+                </label>
+              </div>
             </div>
 
             <label class="field">
@@ -340,6 +356,37 @@
         <div class="empty" id="offers-empty" hidden></div>
         <p style="margin-top: 1rem">
           <button class="btn btn--sm" id="compare-back">Back</button>
+        </p>
+      </section>
+
+      <!-- =========================================================== chats -->
+      <section id="view-chats" hidden>
+        <div class="hero">
+          <h1>Messages</h1>
+          <p id="chats-sub">Conversations about your requests.</p>
+        </div>
+        <ul class="rows" id="threads"></ul>
+        <div class="empty" id="threads-empty" hidden></div>
+      </section>
+
+      <section id="view-thread" hidden>
+        <div class="hero">
+          <h1 id="thread-title">Conversation</h1>
+          <p id="thread-sub"></p>
+        </div>
+        <div id="thread-messages" class="chat"></div>
+        <form id="thread-form" class="chat-compose">
+          <input
+            name="body"
+            required
+            maxlength="2000"
+            placeholder="Write a message…"
+            autocomplete="off"
+          />
+          <button class="btn btn--primary" type="submit">Send</button>
+        </form>
+        <p style="margin-top: 1rem">
+          <button class="btn btn--sm" id="thread-back" type="button">Back</button>
         </p>
       </section>
 
