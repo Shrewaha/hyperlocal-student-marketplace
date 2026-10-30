@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HyperLocal Student Marketplace</title>
+    <meta
+      name="description"
+      content="Students post what they need. Shops nearby reply with prices, sorted cheapest first."
+    />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+
+  <body>
+    <header class="masthead">
+      <div class="wrap masthead__inner">
+        <a class="brand" href="." data-nav="browse">
+          <span class="brand__mark" aria-hidden="true">&#8377;</span>
+          HyperLocal
+        </a>
+        <nav>
+          <span class="who" id="who" hidden></span>
+          <button class="btn btn--ghost btn--sm" data-nav="browse">Browse</button>
+          <button class="btn btn--ghost btn--sm" data-nav="home" id="nav-home" hidden>
+            My account
+          </button>
+          <button class="btn btn--sm" data-nav="auth" id="nav-auth">Sign in</button>
+          <button class="btn btn--ghost btn--sm" id="nav-out" hidden>Sign out</button>
+          <button class="btn btn--ghost btn--sm" id="nav-api" title="Set the API address">
+            Server
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap" id="main">
+      <!-- Shown when config.js has no URL and none is stored in this browser. -->
+      <div class="note note--bad" id="no-api" hidden>
+        <p>
+          <strong>No server address set.</strong> This page is the client only &mdash; it
+          needs the marketplace API to talk to.
+        </p>
+        <p>
+          Deploy the backend, then put its URL in <code>web/config.js</code>. To try it
+          against a copy running on this computer, set it to
+          <code>http://localhost:8000</code>.
+        </p>
+        <p><button class="btn btn--primary btn--sm" id="no-api-set">Set the address</button></p>
+      </div>
+
+      <!-- ============================================================ browse -->
+      <section id="view-browse">
+        <div class="intro">
+          <h1>Shops come to you.</h1>
+          <p>
+            Post what you need and your budget. Shops nearby reply with offers, and you
+            get one list sorted cheapest first.
+          </p>
+        </div>
+
+        <div class="panel">
+          <div class="panel__head">
+            <h2>What shops are listing</h2>
+            <span class="hint">No account needed</span>
+          </div>
+          <div class="panel__body">
+            <form id="search" class="row">
+              <label class="field">
+                <span>Search</span>
+                <input name="q" placeholder="ESP8266, drafter, lab coat&hellip;" />
+              </label>
+              <label class="field">
+                <span>Category</span>
+                <select name="category" data-categories>
+                  <option value="">Any</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Area</span>
+                <input name="area" placeholder="Civil Lines" />
+              </label>
+            </form>
+            <div class="actions">
+              <button class="btn btn--primary btn--sm" form="search" type="submit">
+                Search
+              </button>
+            </div>
+          </div>
+          <ul class="list" id="products"></ul>
+          <div class="empty" id="products-empty" hidden></div>
+        </div>
+      </section>
+
+      <!-- ============================================================== auth -->
+      <section id="view-auth" hidden>
+        <div class="intro">
+          <h1 id="auth-title">Sign in</h1>
+          <p id="auth-sub">Students post what they need. Shops reply with prices.</p>
+        </div>
+
+        <div class="panel">
+          <div class="panel__head">
+            <h2>Account</h2>
+            <span class="hint">
+              <button class="btn btn--ghost btn--sm" id="auth-switch">
+                Create an account
+              </button>
+            </span>
+          </div>
+          <div class="panel__body">
+            <form id="auth-form">
+              <div id="reg-only" hidden>
+                <fieldset>
+                  <legend>I am a</legend>
+                  <div class="choice">
+                    <label><input type="radio" name="role" value="student" checked /> Student</label>
+                    <label><input type="radio" name="role" value="shop" /> Shop</label>
+                  </div>
+                </fieldset>
+
+                <label class="field">
+                  <span>Name</span>
+                  <input name="name" autocomplete="name" />
+                </label>
+
+                <div class="row">
+                  <label class="field">
+                    <span>Area</span>
+                    <input name="area" placeholder="Civil Lines" autocomplete="address-level3" />
+                  </label>
+                  <label class="field" id="shop-name-field" hidden>
+                    <span>Shop name</span>
+                    <input name="shop_name" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="row">
+                <label class="field">
+                  <span>Email</span>
+                  <input name="email" type="email" required autocomplete="email" />
+                </label>
+                <label class="field">
+                  <span>Password</span>
+                  <input
+                    name="password"
+                    type="password"
+                    required
+                    minlength="6"
+                    autocomplete="current-password"
+                  />
+                </label>
+              </div>
+
+              <div class="actions">
+                <button class="btn btn--primary" type="submit" id="auth-go">Sign in</button>
+              </div>
+              <p class="msg" id="auth-msg"></p>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================================================== student -->
+      <section id="view-student" hidden>
+        <div class="intro">
+          <h1>What do you need?</h1>
+          <p>
+            Describe it with your budget. Shops in your area are emailed, and their
+            offers land here.
+          </p>
+        </div>
+
+        <div class="panel">
+          <div class="panel__head"><h2>Post a request</h2></div>
+          <div class="panel__body">
+            <form id="request-form">
+              <label class="field">
+                <span>What you need</span>
+                <input name="title" required maxlength="200" placeholder="ESP8266 NodeMCU" />
+              </label>
+              <div class="row">
+                <label class="field">
+                  <span>Category</span>
+                  <select name="category" data-categories required></select>
+                </label>
+                <label class="field">
+                  <span>Budget (&#8377;)</span>
+                  <input name="budget" type="number" min="0" step="1" placeholder="850" />
+                </label>
+              </div>
+              <label class="field">
+                <span>Specs</span>
+                <input name="specs" maxlength="1000" placeholder="CH340 driver, headers soldered" />
+              </label>
+              <label class="field">
+                <span>Anything else</span>
+                <textarea name="description" maxlength="2000"></textarea>
+              </label>
+              <div class="actions">
+                <button class="btn btn--primary" type="submit">Post request</button>
+              </div>
+              <p class="msg" id="request-msg"></p>
+            </form>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel__head">
+            <h2>My requests</h2>
+            <span class="hint">Tap one to see the offers</span>
+          </div>
+          <ul class="list" id="my-requests"></ul>
+          <div class="empty" id="my-requests-empty" hidden></div>
+        </div>
+      </section>
+
+      <!-- ============================================================== shop -->
+      <section id="view-shop" hidden>
+        <div class="intro">
+          <h1>Students are asking.</h1>
+          <p>Reply with your price. The student sees every offer side by side.</p>
+        </div>
+
+        <div class="panel">
+          <div class="panel__head">
+            <h2>Open requests</h2>
+            <span class="hint">
+              <button class="btn btn--sm" id="area-toggle" aria-pressed="false">
+                My area only
+              </button>
+            </span>
+          </div>
+          <ul class="list" id="open-requests"></ul>
+          <div class="empty" id="open-requests-empty" hidden></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel__head">
+            <h2>My offers</h2>
+            <span class="hint">Cheapest offer on each request is marked</span>
+          </div>
+          <ul class="list" id="my-offers"></ul>
+          <div class="empty" id="my-offers-empty" hidden></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel__head">
+            <h2>My listings</h2>
+            <span class="hint">These show up in public search</span>
+          </div>
+          <div class="panel__body">
+            <form id="product-form">
+              <label class="field">
+                <span>Product</span>
+                <input name="name" required maxlength="200" />
+              </label>
+              <div class="row">
+                <label class="field">
+                  <span>Category</span>
+                  <select name="category" data-categories required></select>
+                </label>
+                <label class="field">
+                  <span>Price (&#8377;)</span>
+                  <input name="price" type="number" min="0" step="0.01" required />
+                </label>
+                <label class="field">
+                  <span>Stock</span>
+                  <input name="stock" type="number" min="0" step="1" value="1" />
+                </label>
+              </div>
+              <label class="field">
+                <span>Specs</span>
+                <input name="specs" maxlength="1000" />
+              </label>
+              <div class="actions">
+                <button class="btn btn--primary" type="submit">Add listing</button>
+              </div>
+              <p class="msg" id="product-msg"></p>
+            </form>
+          </div>
+          <ul class="list" id="my-products"></ul>
+        </div>
+      </section>
+
+      <!-- ========================================================= offers -->
+      <section id="view-offers" hidden>
+        <div class="intro">
+          <h1 id="offers-title">Offers</h1>
+          <p id="offers-sub"></p>
+        </div>
+
+        <div class="panel">
+          <dl class="summary" id="offers-summary"></dl>
+          <ul class="list" id="offers"></ul>
+          <div class="empty" id="offers-empty" hidden></div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn--sm" data-nav="home">Back</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- =========================================================== dialogs -->
+    <dialog id="offer-dialog">
+      <form method="dialog" class="dialog__body" id="offer-form">
+        <h2>Send an offer</h2>
+        <p id="offer-for"></p>
+        <label class="field">
+          <span>Product you would supply</span>
+          <input name="product_name" required maxlength="200" />
+        </label>
+        <div class="row">
+          <label class="field">
+            <span>Your price (&#8377;)</span>
+            <input name="price" type="number" min="0" step="0.01" required />
+          </label>
+          <label class="field">
+            <span>Specs</span>
+            <input name="specs" maxlength="1000" />
+          </label>
+        </div>
+        <label class="field">
+          <span>Note to the student</span>
+          <input name="note" maxlength="1000" placeholder="In stock, pickup today" />
+        </label>
+        <div class="actions">
+          <button class="btn btn--primary" value="send">Send offer</button>
+          <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        </div>
+        <p class="msg" id="offer-msg"></p>
+      </form>
+    </dialog>
+
+    <dialog id="api-dialog">
+      <form method="dialog" class="dialog__body" id="api-form">
+        <h2>Server address</h2>
+        <p>
+          Where this page sends its requests. Stored in this browser only, and it
+          overrides whatever <code>config.js</code> sets.
+        </p>
+        <label class="field">
+          <span>API URL</span>
+          <input name="api" type="url" placeholder="https://marketplace-api.onrender.com" required />
+        </label>
+        <div class="actions">
+          <button class="btn btn--primary" value="save">Save</button>
+          <button class="btn" value="cancel" formnovalidate>Cancel</button>
+          <button class="btn btn--ghost btn--sm" value="clear" formnovalidate>
+            Use config.js
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <footer class="wrap">
+      <p>
+        Built by
+        <a href="https://github.com/shrewaha">Shreyansh Kushwaha</a> &mdash;
+        <a href="https://github.com/Shrewaha/hyperlocal-student-marketplace">source</a>
+        &mdash;
+        <a href="https://github.com/Shrewaha/hyperlocal-student-marketplace/releases/latest"
+          >desktop app</a
+        >
+      </p>
+    </footer>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
