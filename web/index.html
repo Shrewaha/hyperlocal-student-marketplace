@@ -398,6 +398,29 @@
         <div class="contact" id="shop-contact"></div>
 
         <div class="section__head" style="margin-top: 1.5rem">
+          <h2>Reviews</h2>
+          <span class="side" id="shop-rating"></span>
+        </div>
+        <div id="shop-review-form" hidden>
+          <div class="card">
+            <div class="field">
+              <span>Your rating</span>
+              <div class="stars" id="rate-pick" role="radiogroup"></div>
+            </div>
+            <label class="field">
+              <span>Anything to add</span>
+              <input id="rate-body" maxlength="1000" placeholder="Fair price, had it in stock" />
+            </label>
+            <button class="btn btn--primary btn--block" type="button" id="rate-save">
+              Post review
+            </button>
+            <p class="msg" id="rate-msg"></p>
+          </div>
+        </div>
+        <ul class="rows" id="shop-reviews"></ul>
+        <div class="empty" id="shop-reviews-empty" hidden></div>
+
+        <div class="section__head" style="margin-top: 1.5rem">
           <h2>What they list</h2>
           <span class="side" id="shop-count"></span>
         </div>
@@ -417,6 +440,31 @@
         </div>
         <ul class="rows" id="alerts"></ul>
         <div class="empty" id="alerts-empty" hidden></div>
+      </section>
+
+      <!-- ============================================================= owner -->
+      <section id="view-owner" hidden>
+        <div class="hero">
+          <h1>Manage accounts</h1>
+          <p>Everyone on the marketplace. Suspended accounts cannot sign in.</p>
+        </div>
+
+        <button class="btn btn--primary btn--block btn--big" id="owner-add" type="button">
+          Add a shop
+        </button>
+
+        <form class="search" id="owner-search" role="search" style="margin-top: 1rem">
+          <svg aria-hidden="true"><use href="#i-search" /></svg>
+          <input name="q" type="search" placeholder="Name, email or shop" aria-label="Find an account" />
+        </form>
+        <div class="chips" id="owner-filter" role="group" aria-label="Filter by role">
+          <button class="chip" type="button" data-role="" aria-pressed="true">Everyone</button>
+          <button class="chip" type="button" data-role="shop" aria-pressed="false">Shops</button>
+          <button class="chip" type="button" data-role="student" aria-pressed="false">Students</button>
+        </div>
+
+        <ul class="rows" id="owner-users"></ul>
+        <div class="empty" id="owner-empty" hidden></div>
       </section>
 
       <!-- ============================================================ account -->
@@ -511,6 +559,7 @@
             </div>
           </div>
           <div class="actions">
+            <button class="btn btn--primary" id="nav-owner" hidden>Manage accounts</button>
             <button class="btn" id="nav-api">Server address</button>
             <button class="btn" id="nav-out">Sign out</button>
           </div>
@@ -637,6 +686,44 @@
             </button>
           </div>
         </div>
+      </form>
+    </dialog>
+
+    <dialog id="shop-dialog">
+      <form method="dialog" class="sheet" id="shop-form">
+        <h2>Add a shop</h2>
+        <p>For a shopkeeper who cannot work the signup form themselves.</p>
+        <label class="field">
+          <span>Shop name</span>
+          <input name="shop_name" required maxlength="160" />
+        </label>
+        <label class="field">
+          <span>Owner's name</span>
+          <input name="name" required maxlength="120" />
+        </label>
+        <div class="row2">
+          <label class="field">
+            <span>Area</span>
+            <input name="area" list="known-areas" maxlength="120" />
+          </label>
+          <label class="field">
+            <span>Phone</span>
+            <input name="phone" type="tel" inputmode="tel" maxlength="32" />
+          </label>
+        </div>
+        <label class="field">
+          <span>Email</span>
+          <input name="email" type="email" required />
+        </label>
+        <label class="field">
+          <span>Password to give them</span>
+          <input name="password" required minlength="6" />
+        </label>
+        <div class="actions">
+          <button class="btn btn--primary" value="save">Create</button>
+          <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        </div>
+        <p class="msg" id="shop-form-msg"></p>
       </form>
     </dialog>
 

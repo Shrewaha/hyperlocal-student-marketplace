@@ -402,7 +402,12 @@
 
   /* Screens reached from a tab rather than being one. The tab that leads
      here stays lit, so the bar never goes blank mid-journey. */
-  var PARENT_OF = { compare: "mine", thread: "chats", shop: "browse" };
+  var PARENT_OF = {
+    compare: "mine",
+    thread: "chats",
+    shop: "browse",
+    owner: "account",
+  };
 
   function paintTabs() {
     var nav = $("#tabs");
@@ -439,6 +444,7 @@
     "alerts",
     "shop",
     "catalogue",
+    "owner",
     "account",
   ];
 
@@ -466,6 +472,7 @@
     if (name === "requests") loadOpenRequests();
     if (name === "offers-mine") loadMyOffers();
     if (name === "catalogue") loadMyProducts();
+    if (name === "owner") loadOwnerUsers();
     if (name === "chats") loadThreads();
     if (name === "alerts") loadAlerts();
     if (name === "account") paintAccount();
@@ -534,6 +541,7 @@
     show($("#profile-address"), isShop);
     show($("#profile-about"), isShop);
     show($("#profile-location"), isShop);
+    show($("#nav-owner"), !!u.is_admin);
 
     var f = $("#profile-form").elements;
     f.name.value = u.name || "";
@@ -1493,6 +1501,78 @@
    * student most wants to know who is quoting them is exactly the moment a
    * sign-in wall would send them away.
    */
+  /* ------------------------------------------------------------- reviews */
+
+  function starsText(n) {
+    var full = Math.round(n || 0);
+    return "\u2605\u2605\u2605\u2605\u2605".slice(0, full) +
+           "\u2606\u2606\u2606\u2606\u2606".slice(0, 5 - full);
+  }
+
+  var myRating = 0;
+
+  function paintStarPicker() {
+    var box = $("#rate-pick");
+    box.textContent = "";
+    for (var i = 1; i <= 5; i++) {
+      (function (value) {
+        var b = el("button", "star", value <= myRating ? "\u2605" : "\u2606");
+        b.type = "button";
+        b.setAttribute("role", "radio");
+        b.setAttribute("aria-checked", String(value === myRating));
+        b.setAttribute("aria-label", value + " out of 5");
+        if (value <= myRating) b.classList.add("star--on");
+        b.addEventListener("click", function () {
+          myRating = value;
+          paintStarPicker();
+        });
+        box.appendChild(b);
+      })(i);
+    }
+  }
+
+  function loadReviews(shopId) {
+    var list = $("#shop-reviews");
+    var empty = $("#shop-reviews-empty");
+    list.textContent = "";
+    show(empty, false);
+
+    return request("/api/shops/" + shopId + "/reviews", { auth: false })
+      .then(function (data) {
+        var box = $("#shop-rating");
+        box.textContent = "";
+        if (data.count) {
+          var r = el("span", "rating");
+          r.appendChild(el("span", "rating__stars", starsText(data.average)));
+          r.appendChild(el("span", null, String(data.average)));
+          r.appendChild(
+            el("span", "rating__count",
+               data.count === 1 ? "(1)" : "(" + data.count + ")")
+          );
+          box.appendChild(r);
+        } else {
+          box.textContent = "No reviews yet";
+        }
+
+        var items = data.reviews || [];
+        if (!items.length) {
+          emptyState(empty, "No reviews yet.",
+            "A student can review a shop once it has sent them an offer.");
+          return;
+        }
+        items.forEach(function (v) {
+          var li = el("li");
+          var main = el("div", "row__main");
+          main.appendChild(el("div", "rating__stars", starsText(v.rating)));
+          main.appendChild(el("div", "row__name", v.student_name));
+          if (v.body) main.appendChild(el("div", "row__meta", v.body));
+          li.appendChild(main);
+          list.appendChild(li);
+        });
+      })
+      .catch(function () {});
+  }
+
   function openShop(shopId) {
     state.cameFrom = state.view === "shop" ? state.cameFrom : state.view;
     go("shop");
@@ -1555,6 +1635,19 @@
           })
         );
 
+        /* Only a student sees the form, and the server decides whether they
+           have actually dealt with this shop -- the button is not the
+           permission, it is only the invitation. */
+        myRating = 0;
+        $("#rate-body").value = "";
+        text($("#rate-msg"), "");
+        paintStarPicker();
+        show($("#shop-review-form"), !!(state.user && state.user.role === "student"));
+        $("#rate-save").onclick = function () {
+          postReview(shop.id);
+        };
+        loadReviews(shop.id);
+
         text($("#shop-count"), data.products.length ? "Cheapest first" : "");
         if (!data.products.length) {
           emptyState(empty, "Nothing listed yet.", "This shop answers requests but has not added a catalogue.");
@@ -1567,6 +1660,131 @@
       .catch(function (err) {
         text($("#shop-name"), "Shop unavailable");
         emptyState(empty, "Could not load that shop.", err.message);
+      });
+  }
+
+  function postReview(shopId) {
+    var msg = $("#rate-msg");
+    msg.className = "msg";
+    if (!myRating) {
+      msg.className = "msg msg--bad";
+      text(msg, "Pick a rating first.");
+      return;
+    }
+    text(msg, "Posting\u2026");
+
+    request("/api/shops/" + shopId + "/reviews", {
+      method: "POST",
+      body: { rating: myRating, body: $("#rate-body").value.trim() || null },
+    }).then(
+      function () {
+        text(msg, "");
+        $("#rate-body").value = "";
+        toast("Review posted.", "ok");
+        loadReviews(shopId);
+      },
+      function (err) {
+        msg.className = "msg msg--bad";
+        text(msg, err.message);
+      }
+    );
+  }
+
+  /* ---------------------------------------------------------------- owner */
+
+  /*
+   * Only reachable by an account whose email is in the server's ADMIN_EMAILS.
+   * The button below is hidden for everyone else, but that is courtesy: the
+   * endpoints answer 404 to anyone who is not an owner, so hiding it is not
+   * what keeps it shut.
+   */
+  var ownerFilter = { q: "", role: "" };
+
+  function loadOwnerUsers() {
+    var list = $("#owner-users");
+    var empty = $("#owner-empty");
+    list.textContent = "";
+    show(empty, false);
+
+    var params = new URLSearchParams();
+    if (ownerFilter.q) params.set("q", ownerFilter.q);
+    if (ownerFilter.role) params.set("role", ownerFilter.role);
+
+    return request("/api/admin/users?" + params.toString())
+      .then(function (data) {
+        var items = data.users || [];
+        if (!items.length) {
+          emptyState(empty, "Nobody here.", "No account matches that.");
+          return;
+        }
+        items.forEach(function (u) {
+          var li = el("li", u.blocked ? "row--blocked" : null);
+          li.appendChild(avatar(u));
+
+          var main = el("div", "row__main");
+          var nameRow = el("div", "row__name");
+          nameRow.appendChild(document.createTextNode(u.shop_name || u.name));
+          if (u.blocked) nameRow.appendChild(el("span", "badge-off", " SUSPENDED"));
+          if (u.is_admin) nameRow.appendChild(el("span", "badge-owner", " OWNER"));
+          main.appendChild(nameRow);
+          main.appendChild(
+            el("div", "row__meta",
+               [u.email, u.area,
+                u.role === "shop"
+                  ? u.listings + " listed \u00b7 " + u.offers + " offers"
+                  : u.requests + " requests"
+               ].filter(Boolean).join(" \u00b7 "))
+          );
+          li.appendChild(main);
+
+          var side = el("div", "row__side");
+          if (!u.is_admin) {
+            var toggle = el("button", "btn btn--sm", u.blocked ? "Unblock" : "Block");
+            toggle.type = "button";
+            toggle.addEventListener("click", function () {
+              request(
+                "/api/admin/users/" + u.id + (u.blocked ? "/unblock" : "/block"),
+                { method: "POST" }
+              ).then(
+                function () {
+                  toast(u.blocked ? "Account restored." : "Account suspended.", "ok");
+                  loadOwnerUsers();
+                },
+                function (err) {
+                  toast(err.message, "bad", 6000);
+                }
+              );
+            });
+            side.appendChild(toggle);
+
+            var del = el("button", "btn btn--sm btn--ghost btn--danger", "Delete");
+            del.type = "button";
+            del.addEventListener("click", function () {
+              /* Spelled out, because this takes their listings, offers and
+                 messages with it and cannot be undone. */
+              if (!window.confirm(
+                    "Delete " + (u.shop_name || u.name) +
+                    " and everything they have posted? This cannot be undone.")) {
+                return;
+              }
+              request("/api/admin/users/" + u.id, { method: "DELETE" }).then(
+                function () {
+                  toast("Account deleted.", "ok");
+                  loadOwnerUsers();
+                },
+                function (err) {
+                  toast(err.message, "bad", 6000);
+                }
+              );
+            });
+            side.appendChild(del);
+          }
+          li.appendChild(side);
+          list.appendChild(li);
+        });
+      })
+      .catch(function (err) {
+        emptyState(empty, "Could not load accounts.", err.message);
       });
   }
 
@@ -1981,6 +2199,62 @@
   });
 
   var pendingImage = null;
+
+  $("#nav-owner").addEventListener("click", function () {
+    go("owner");
+  });
+
+  var ownerSearchTimer = null;
+  $("#owner-search").addEventListener("input", function (e) {
+    ownerFilter.q = e.target.value.trim();
+    clearTimeout(ownerSearchTimer);
+    ownerSearchTimer = setTimeout(loadOwnerUsers, 350);
+  });
+
+  $("#owner-search").addEventListener("submit", function (e) {
+    e.preventDefault();
+    loadOwnerUsers();
+  });
+
+  document.querySelectorAll("#owner-filter [data-role]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      ownerFilter.role = b.getAttribute("data-role");
+      document.querySelectorAll("#owner-filter [data-role]").forEach(function (o) {
+        o.setAttribute("aria-pressed", String(o === b));
+      });
+      loadOwnerUsers();
+    });
+  });
+
+  $("#owner-add").addEventListener("click", function () {
+    $("#shop-form").reset();
+    text($("#shop-form-msg"), "");
+    $("#shop-dialog").showModal();
+  });
+
+  $("#shop-dialog").addEventListener("close", function () {
+    if ($("#shop-dialog").returnValue !== "save") return;
+    var f = $("#shop-form").elements;
+    request("/api/admin/shops", {
+      method: "POST",
+      body: {
+        name: f.name.value.trim(),
+        email: f.email.value.trim(),
+        password: f.password.value,
+        shop_name: f.shop_name.value.trim(),
+        area: f.area.value.trim() || null,
+        phone: f.phone.value.trim() || null,
+      },
+    }).then(
+      function () {
+        toast("Shop added. Give them the email and password.", "ok", 6000);
+        loadOwnerUsers();
+      },
+      function (err) {
+        toast(err.message, "bad", 6000);
+      }
+    );
+  });
 
   $("#cat-add").addEventListener("click", function () {
     openItemSheet(null);

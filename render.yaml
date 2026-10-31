@@ -39,5 +39,10 @@ services:
         value: "true"
       - key: APP_NAME
         value: HyperLocal Student Marketplace
+      # Comma-separated addresses that may manage accounts. Left blank on
+      # purpose: fill it in from the dashboard, so an owner list is never
+      # committed to a public repository.
+      - key: ADMIN_EMAILS
+        sync: false
       - key: PYTHON_VERSION
         value: "3.12"
