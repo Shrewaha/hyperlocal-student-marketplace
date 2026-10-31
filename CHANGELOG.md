@@ -6,6 +6,27 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-31
+
+### Added
+
+- **Reviews.** A student rates a shop out of five, but only once that shop
+  has sent them an offer -- a rating from somebody who never dealt with the
+  shop is worth nothing, and that is how ratings systems get gamed. One
+  review per pair, replaced rather than stacked if written again.
+- **An owner account.** Identified by the `ADMIN_EMAILS` environment variable
+  rather than a role in the database, so nothing in the API can grant it and
+  revoking it is changing a setting. List every account, suspend, restore,
+  delete, and register a shop on its behalf.
+- A suspended account cannot sign in, its existing sessions stop working
+  immediately, and it disappears from browsing, from the area list and from
+  the fan-out when a student posts.
+
+### Note
+
+Set `ADMIN_EMAILS` in the Render dashboard to the address you sign in with.
+Without it nobody is an owner and the management screen does not exist.
+
 ## [1.7.0] - 2026-10-31
 
 ### Added
@@ -188,7 +209,8 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.8.0
 [1.7.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.7.0
 [1.6.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.6.0
 [1.5.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.5.0

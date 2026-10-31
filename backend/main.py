@@ -40,6 +40,19 @@ CATEGORIES = [
 
 ROLES = ("student", "shop")
 
+# Who may administer the marketplace, read from the environment rather than
+# stored as a role on an account.
+#
+# Nothing in the API can grant this, so there is no "make me an admin"
+# endpoint to find, no row to tamper with, and revoking it is changing a
+# setting rather than hoping a database update ran. On Render this is set in
+# the dashboard: ADMIN_EMAILS=you@example.com
+ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.getenv("ADMIN_EMAILS", "").split(",")
+    if e.strip()
+}
+
 app = FastAPI(
     title="HyperLocal Student Marketplace",
     description="Students post what they need. Local shops compete on price.",
@@ -72,6 +85,7 @@ CREATE TABLE IF NOT EXISTS users (
     shop_name  TEXT,
     avatar     BLOB,
     avatar_type TEXT,
+    blocked_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -121,6 +135,19 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- A conversation is a request paired with one shop. Two shops answering the
 -- same request are two separate threads, and the student is whoever owns the
 -- request, so the pair alone identifies both sides.
+-- A student's verdict on a shop. One per pair: a second opinion from the
+-- same student replaces the first rather than stacking, so a shop cannot be
+-- buried or inflated by one person posting repeatedly.
+CREATE TABLE IF NOT EXISTS reviews (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    shop_id    INTEGER NOT NULL REFERENCES users(id),
+    student_id INTEGER NOT NULL REFERENCES users(id),
+    rating     INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+    body       TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(shop_id, student_id)
+);
+
 -- What has happened that someone should know about. Written at the moment
 -- the thing happens, so the feed is a record rather than a query that has to
 -- reconstruct history from offers, messages and requests every time.
@@ -161,6 +188,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_student ON requests(student_id, id DESC)
 CREATE INDEX IF NOT EXISTS idx_products_shop   ON products(shop_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(request_id, shop_id, id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_shop ON reviews(shop_id, id DESC);
 """
 
 
@@ -191,7 +219,7 @@ def init_db():
             conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
         for col, decl in (("address", "TEXT"), ("lat", "REAL"), ("lng", "REAL"),
                           ("about", "TEXT"), ("avatar", "BLOB"),
-                          ("avatar_type", "TEXT")):
+                          ("avatar_type", "TEXT"), ("blocked_at", "DATETIME")):
             if col not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (col, decl))
         pcols = [r["name"] for r in conn.execute("PRAGMA table_info(products)")]
@@ -263,7 +291,25 @@ def get_current_user(authorization: Optional[str] = Header(None),
     ).fetchone()
     if row is None:
         raise HTTPException(401, "Invalid or expired token")
-    return dict(row)
+    user = dict(row)
+    # Checked on every request, not only at sign-in. Blocking somebody who is
+    # already signed in has to take effect now; otherwise their existing
+    # token keeps working until they happen to sign out.
+    if user.get("blocked_at") is not None:
+        raise HTTPException(403, "This account has been suspended")
+    return user
+
+
+def is_admin(user: dict) -> bool:
+    return (user.get("email") or "").lower() in ADMIN_EMAILS
+
+
+def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    if not is_admin(user):
+        # Deliberately the same answer a non-existent route would give, so
+        # that probing for an admin area tells an attacker nothing.
+        raise HTTPException(404, "Not found")
+    return user
 
 
 def require_student(user: dict = Depends(get_current_user)) -> dict:
@@ -329,7 +375,8 @@ def count_shops_in_area(conn: sqlite3.Connection, area: Optional[str]) -> int:
         return 0
     row = conn.execute(
         "SELECT COUNT(*) AS n FROM users "
-        "WHERE role = 'shop' AND TRIM(LOWER(COALESCE(area,''))) = ?", (key,)
+        "WHERE role = 'shop' AND blocked_at IS NULL "
+        "AND TRIM(LOWER(COALESCE(area,''))) = ?", (key,)
     ).fetchone()
     return int(row["n"]) if row else 0
 
@@ -415,6 +462,7 @@ def public_user(user: dict) -> dict:
         "lng": user.get("lng"),
         "about": user.get("about"),
         "has_avatar": user.get("avatar") is not None,
+        "is_admin": is_admin(user),
         "notify_email": bool(user.get("notify_email", 1) in (1, None)),
     }
 
@@ -471,6 +519,21 @@ class ProductEdit(BaseModel):
     price: Optional[float] = Field(default=None, ge=0)
     stock: Optional[int] = Field(default=None, ge=0)
     image: Optional[str] = Field(default=None, max_length=3_000_000)
+
+
+class ReviewIn(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    body: Optional[str] = Field(default=None, max_length=1000)
+
+
+class ShopIn(BaseModel):
+    """An owner registering a shop on its behalf."""
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=200)
+    shop_name: str = Field(min_length=1, max_length=160)
+    area: Optional[str] = Field(default=None, max_length=120)
+    phone: Optional[str] = Field(default=None, max_length=32)
 
 
 class MessageIn(BaseModel):
@@ -559,6 +622,8 @@ def login(data: LoginIn, conn: sqlite3.Connection = Depends(get_db)):
     # which email addresses are registered.
     if row is None or not verify_password(data.password, row["password"]):
         raise HTTPException(401, "Incorrect email or password")
+    if row["blocked_at"] is not None:
+        raise HTTPException(403, "This account has been suspended")
 
     token = new_token()
     conn.execute("INSERT INTO sessions (token, user_id) VALUES (?,?)",
@@ -673,7 +738,7 @@ def areas(conn: sqlite3.Connection = Depends(get_db)):
         "       SUM(CASE WHEN role = 'shop' THEN 1 ELSE 0 END) AS shops, "
         "       COUNT(*) AS people "
         "FROM users "
-        "WHERE area IS NOT NULL AND TRIM(area) <> '' "
+        "WHERE area IS NOT NULL AND TRIM(area) <> '' AND blocked_at IS NULL "
         "GROUP BY TRIM(LOWER(area)), area "
         "ORDER BY shops DESC, people DESC"
     ).fetchall()
@@ -718,7 +783,7 @@ def create_request(data: RequestIn, background: BackgroundTasks,
     key = area_key(user["area"])
     if key:
         shops = conn.execute(
-            "SELECT id FROM users WHERE role = 'shop' "
+            "SELECT id FROM users WHERE role = 'shop' AND blocked_at IS NULL "
             "AND TRIM(LOWER(COALESCE(area,''))) = ? LIMIT 50", (key,)
         ).fetchall()
         for shop in shops:
@@ -875,7 +940,8 @@ def browse_products(q: Optional[str] = None, category: Optional[str] = None,
            "       p.price, p.stock, p.created_at, "
            "       (p.image IS NOT NULL) AS has_image, "
            "       u.shop_name, u.name AS shop_contact, u.area "
-           "FROM products p JOIN users u ON u.id = p.shop_id WHERE 1=1")
+           "FROM products p JOIN users u ON u.id = p.shop_id "
+           "WHERE u.blocked_at IS NULL")
     params: List = []
     if q:
         sql += " AND (p.name LIKE ? OR p.description LIKE ? OR p.specs LIKE ?)"
@@ -972,6 +1038,220 @@ def delete_product(product_id: int,
     return {"ok": True, "id": product_id}
 
 
+# ==========================================================================
+# Owner
+# ==========================================================================
+#
+# Everything here answers 404 to anyone who is not an owner, so the area does
+# not announce itself to someone probing for it.
+
+
+@app.get("/api/admin/users", tags=["admin"])
+def admin_users(q: Optional[str] = None, role: Optional[str] = None,
+                conn: sqlite3.Connection = Depends(get_db),
+                owner: dict = Depends(require_admin)):
+    """Every account, blocked ones included -- they are the point."""
+    sql = (
+        "SELECT u.id, u.name, u.email, u.role, u.area, u.shop_name, u.phone, "
+        "       u.blocked_at, u.created_at, "
+        "       (SELECT COUNT(*) FROM products p WHERE p.shop_id = u.id) AS listings, "
+        "       (SELECT COUNT(*) FROM offers o WHERE o.shop_id = u.id) AS offers, "
+        "       (SELECT COUNT(*) FROM requests r WHERE r.student_id = u.id) AS requests "
+        "FROM users u WHERE 1=1"
+    )
+    params: List = []
+    if role in ROLES:
+        sql += " AND u.role = ?"
+        params.append(role)
+    if q:
+        sql += " AND (u.name LIKE ? OR u.email LIKE ? OR u.shop_name LIKE ?)"
+        params += ["%%%s%%" % q] * 3
+    sql += " ORDER BY u.id DESC LIMIT 200"
+
+    rows = conn.execute(sql, params).fetchall()
+    return {
+        "users": [{
+            **dict(r),
+            "blocked": r["blocked_at"] is not None,
+            "is_admin": (r["email"] or "").lower() in ADMIN_EMAILS,
+        } for r in rows]
+    }
+
+
+@app.post("/api/admin/users/{user_id}/block", tags=["admin"])
+def admin_block(user_id: int, conn: sqlite3.Connection = Depends(get_db),
+                owner: dict = Depends(require_admin)):
+    row = conn.execute("SELECT id, email FROM users WHERE id = ?",
+                       (user_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "No such account")
+    if (row["email"] or "").lower() in ADMIN_EMAILS:
+        # Locking the owners out of their own marketplace would need a
+        # database edit to undo, and there is no reason to allow it.
+        raise HTTPException(400, "An owner account cannot be suspended")
+
+    conn.execute("UPDATE users SET blocked_at = CURRENT_TIMESTAMP WHERE id = ?",
+                 (user_id,))
+    # Their sessions go with them; otherwise an open tab keeps working.
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    conn.commit()
+    return {"ok": True, "id": user_id, "blocked": True}
+
+
+@app.post("/api/admin/users/{user_id}/unblock", tags=["admin"])
+def admin_unblock(user_id: int, conn: sqlite3.Connection = Depends(get_db),
+                  owner: dict = Depends(require_admin)):
+    row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "No such account")
+    conn.execute("UPDATE users SET blocked_at = NULL WHERE id = ?", (user_id,))
+    conn.commit()
+    return {"ok": True, "id": user_id, "blocked": False}
+
+
+@app.delete("/api/admin/users/{user_id}", tags=["admin"])
+def admin_delete(user_id: int, conn: sqlite3.Connection = Depends(get_db),
+                 owner: dict = Depends(require_admin)):
+    """
+    Remove an account and everything that belonged to it.
+
+    Deleted in dependency order, because the schema has foreign keys on and
+    SQLite will refuse a parent whose children are still there. Offers and
+    requests go too: an offer by a shop that no longer exists would leave a
+    comparison table quoting a price nobody stands behind.
+    """
+    row = conn.execute("SELECT id, email FROM users WHERE id = ?",
+                       (user_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "No such account")
+    if (row["email"] or "").lower() in ADMIN_EMAILS:
+        raise HTTPException(400, "An owner account cannot be deleted here")
+
+    conn.execute("DELETE FROM reviews WHERE shop_id = ? OR student_id = ?",
+                 (user_id, user_id))
+    conn.execute("DELETE FROM messages WHERE sender_id = ? OR shop_id = ?",
+                 (user_id, user_id))
+    conn.execute("DELETE FROM thread_reads WHERE user_id = ? OR shop_id = ?",
+                 (user_id, user_id))
+    conn.execute("DELETE FROM notifications WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM offers WHERE shop_id = ?", (user_id,))
+    conn.execute("DELETE FROM products WHERE shop_id = ?", (user_id,))
+    # A student's requests take their offers with them.
+    conn.execute(
+        "DELETE FROM offers WHERE request_id IN "
+        "(SELECT id FROM requests WHERE student_id = ?)", (user_id,))
+    conn.execute("DELETE FROM requests WHERE student_id = ?", (user_id,))
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    return {"ok": True, "id": user_id}
+
+
+@app.post("/api/admin/shops", tags=["admin"])
+def admin_add_shop(data: ShopIn, conn: sqlite3.Connection = Depends(get_db),
+                   owner: dict = Depends(require_admin)):
+    """
+    Register a shop on its behalf.
+
+    A shopkeeper who cannot work the signup form can still be put on the
+    marketplace by somebody sitting with them, which is how this gets its
+    first dozen shops.
+    """
+    email = data.email.lower().strip()
+    if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+        raise HTTPException(409, "An account with that email already exists")
+
+    cur = conn.execute(
+        "INSERT INTO users (name, email, password, role, area, shop_name, phone) "
+        "VALUES (?,?,?,'shop',?,?,?)",
+        (data.name.strip(), email, hash_password(data.password),
+         normalize_area(data.area), data.shop_name.strip(),
+         normalize_phone(data.phone)),
+    )
+    conn.commit()
+    return {"ok": True, "id": cur.lastrowid}
+
+
+# ==========================================================================
+# Reviews
+# ==========================================================================
+
+
+def review_summary(conn: sqlite3.Connection, shop_id: int) -> dict:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, AVG(rating) AS avg FROM reviews WHERE shop_id = ?",
+        (shop_id,)
+    ).fetchone()
+    return {
+        "count": row["n"] or 0,
+        "average": round(row["avg"], 2) if row["avg"] is not None else None,
+    }
+
+
+def has_dealt_with(conn: sqlite3.Connection, student_id: int, shop_id: int) -> bool:
+    """
+    Whether this shop has actually quoted this student.
+
+    A review is only worth reading if the person writing it was on the other
+    side of a real price. Without this a shop can be praised or buried by
+    accounts that never spoke to it, which is the failure mode of every
+    ratings system that does not check.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM offers o JOIN requests r ON r.id = o.request_id "
+        "WHERE o.shop_id = ? AND r.student_id = ? LIMIT 1",
+        (shop_id, student_id)
+    ).fetchone()
+    return row is not None
+
+
+@app.get("/api/shops/{shop_id}/reviews", tags=["reviews"])
+def list_reviews(shop_id: int, limit: int = Query(20, le=50),
+                 conn: sqlite3.Connection = Depends(get_db)):
+    """Public: a student weighing an offer should not have to sign in first."""
+    rows = conn.execute(
+        "SELECT v.id, v.rating, v.body, v.created_at, u.name AS student_name "
+        "FROM reviews v JOIN users u ON u.id = v.student_id "
+        "WHERE v.shop_id = ? ORDER BY v.id DESC LIMIT ?", (shop_id, limit)
+    ).fetchall()
+    out = review_summary(conn, shop_id)
+    out["reviews"] = [dict(r) for r in rows]
+    return out
+
+
+@app.post("/api/shops/{shop_id}/reviews", tags=["reviews"])
+def write_review(shop_id: int, data: ReviewIn,
+                 conn: sqlite3.Connection = Depends(get_db),
+                 user: dict = Depends(require_student)):
+    shop = conn.execute(
+        "SELECT id, name, shop_name FROM users "
+        "WHERE id = ? AND role = 'shop' AND blocked_at IS NULL", (shop_id,)
+    ).fetchone()
+    if shop is None:
+        raise HTTPException(404, "No such shop")
+
+    if not has_dealt_with(conn, user["id"], shop_id):
+        raise HTTPException(
+            403, "You can review a shop once it has sent you an offer")
+
+    # One per pair: writing again replaces what you said rather than adding
+    # to it, so nobody can weight their own opinion by repeating it.
+    conn.execute(
+        "INSERT INTO reviews (shop_id, student_id, rating, body) VALUES (?,?,?,?) "
+        "ON CONFLICT(shop_id, student_id) DO UPDATE SET "
+        "  rating = excluded.rating, body = excluded.body, "
+        "  created_at = CURRENT_TIMESTAMP",
+        (shop_id, user["id"], data.rating, (data.body or "").strip() or None),
+    )
+    notify(
+        conn, shop_id, "review",
+        "%s rated you %d/5" % (user["name"], data.rating),
+        (data.body or "").strip()[:120] or None,
+    )
+    conn.commit()
+    return {"ok": True, **review_summary(conn, shop_id)}
+
+
 @app.get("/api/users/{user_id}/avatar", tags=["catalog"])
 def user_avatar(user_id: int, conn: sqlite3.Connection = Depends(get_db)):
     """
@@ -1008,7 +1288,7 @@ def shop_page(shop_id: int, conn: sqlite3.Connection = Depends(get_db)):
     row = conn.execute(
         "SELECT id, name, shop_name, area, about, address, lat, lng, phone, "
         "       (avatar IS NOT NULL) AS has_avatar, created_at "
-        "FROM users WHERE id = ? AND role = 'shop'", (shop_id,)
+        "FROM users WHERE id = ? AND role = 'shop' AND blocked_at IS NULL", (shop_id,)
     ).fetchone()
     if row is None:
         raise HTTPException(404, "No such shop")
@@ -1027,7 +1307,11 @@ def shop_page(shop_id: int, conn: sqlite3.Connection = Depends(get_db)):
         "FROM offers o WHERE o.shop_id = ?", (shop_id,)
     ).fetchone()
 
+    summary = review_summary(conn, shop_id)
+
     return {
+        "rating": summary["average"],
+        "reviews": summary["count"],
         "shop": {
             "id": row["id"],
             "name": row["shop_name"] or row["name"],
