@@ -458,6 +458,21 @@ class ProfileIn(BaseModel):
     avatar: Optional[str] = Field(default=None, max_length=3_000_000)
 
 
+class ProductEdit(BaseModel):
+    """
+    Correcting a listing, which is not the same shape as creating one. Every
+    field optional, None meaning untouched -- a shopkeeper fixing a price
+    should not have to retype the specs to keep them.
+    """
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    category: Optional[str] = None
+    description: Optional[str] = Field(default=None, max_length=2000)
+    specs: Optional[str] = Field(default=None, max_length=1000)
+    price: Optional[float] = Field(default=None, ge=0)
+    stock: Optional[int] = Field(default=None, ge=0)
+    image: Optional[str] = Field(default=None, max_length=3_000_000)
+
+
 class MessageIn(BaseModel):
     request_id: int
     # Which shop's thread. A shop sending to a student may leave this out --
@@ -876,6 +891,85 @@ def browse_products(q: Optional[str] = None, category: Optional[str] = None,
 
     rows = conn.execute(sql, params).fetchall()
     return {"products": [dict(r) for r in rows]}
+
+
+@app.patch("/api/products/{product_id}", tags=["catalog"])
+def edit_product(product_id: int, data: ProductEdit,
+                 conn: sqlite3.Connection = Depends(get_db),
+                 user: dict = Depends(require_shop)):
+    """Change a listing. Only the shop that owns it may."""
+    row = conn.execute("SELECT shop_id FROM products WHERE id = ?",
+                       (product_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "No such listing")
+    if row["shop_id"] != user["id"]:
+        raise HTTPException(403, "That listing belongs to another shop")
+
+    sets, params = [], []
+
+    def put(column, value):
+        sets.append("%s = ?" % column)
+        params.append(value)
+
+    if data.name is not None:
+        name = data.name.strip()
+        if not name:
+            raise HTTPException(400, "Name cannot be empty")
+        put("name", name)
+    if data.category is not None:
+        if data.category not in CATEGORIES:
+            raise HTTPException(400, "Unknown category")
+        put("category", data.category)
+    if data.description is not None:
+        put("description", data.description.strip() or None)
+    if data.specs is not None:
+        put("specs", data.specs.strip() or None)
+    if data.price is not None:
+        put("price", data.price)
+    if data.stock is not None:
+        put("stock", data.stock)
+    if data.image is not None:
+        if data.image.strip():
+            blob, media = decode_data_url(data.image)
+            put("image", blob)
+            put("image_type", media)
+        else:
+            put("image", None)
+            put("image_type", None)
+
+    if sets:
+        params.append(product_id)
+        conn.execute("UPDATE products SET " + ", ".join(sets) + " WHERE id = ?", params)
+        conn.commit()
+
+    out = conn.execute(
+        "SELECT id, shop_id, name, category, description, specs, price, stock, "
+        "       created_at, (image IS NOT NULL) AS has_image "
+        "FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+    return dict(out)
+
+
+@app.delete("/api/products/{product_id}", tags=["catalog"])
+def delete_product(product_id: int,
+                   conn: sqlite3.Connection = Depends(get_db),
+                   user: dict = Depends(require_shop)):
+    """
+    Withdraw a listing.
+
+    Removed outright rather than hidden behind a flag: a listing is a price
+    on a shelf, and nothing else in the database points at one, so there is
+    no history to preserve by keeping it. Offers are separate rows.
+    """
+    row = conn.execute("SELECT shop_id FROM products WHERE id = ?",
+                       (product_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "No such listing")
+    if row["shop_id"] != user["id"]:
+        raise HTTPException(403, "That listing belongs to another shop")
+    conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
+    conn.commit()
+    return {"ok": True, "id": product_id}
 
 
 @app.get("/api/users/{user_id}/avatar", tags=["catalog"])
