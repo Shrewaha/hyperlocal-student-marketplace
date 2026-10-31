@@ -6,6 +6,23 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-31
+
+### Added
+
+- **A shop can edit and remove a listing.** `PATCH` and `DELETE` on a
+  product. Until now a listing could only be added, so a wrong price stayed
+  wrong and a sold-out item stayed on the shelf.
+- **A catalogue screen** with its own tab, in place of a form buried below
+  the offers list.
+- **Fast entry.** Two required fields, the category as a grid of coloured
+  pictures rather than an English dropdown, the camera opened directly, a
+  numeric keypad for the price, and a save-and-add-another that keeps the
+  sheet open and the category. Five items went in in under three seconds.
+- **Hindi.** The shops this is for are counters in Ayodhya, where Devanagari
+  is read far more easily than English, and a form whose labels you are
+  guessing at is one you fill in slowly and wrongly.
+
 ## [1.6.0] - 2026-10-30
 
 ### Added
@@ -171,7 +188,8 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.7.0
 [1.6.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.6.0
 [1.5.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.5.0
 [1.4.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.4.0

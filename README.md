@@ -278,6 +278,7 @@ hyperlocal-student-marketplace/
 ├── web/
 │   ├── index.html         browser client, same API as the desktop app
 │   ├── app.js             no framework, no build step
+│   ├── i18n.js            English and Hindi labels
 │   ├── styles.css
 │   └── config.js          put your deployed API URL here
 ├── android/

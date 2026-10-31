@@ -687,6 +687,190 @@ button {
   color: var(--best);
 }
 
+/* ------------------------------------------------- catalogue entry */
+
+/*
+ * Everything a shopkeeper touches is bigger than the rest of the app. The
+ * person entering thirty items is often doing it one-handed behind a counter,
+ * sometimes in reading glasses, and the cost of a mis-tap is a wrong price on
+ * a shelf.
+ */
+.btn--big {
+  padding: 0.95rem 1.2rem;
+  font-size: 1.0625rem;
+  border-radius: var(--r-md);
+}
+
+.btn--danger {
+  color: var(--danger);
+}
+
+.field--big > span {
+  font-size: 0.9375rem;
+  color: var(--ink);
+}
+
+.field--big input {
+  padding: 0.85rem 0.8rem;
+  font-size: 1.125rem;
+}
+
+/* Rupee sign welded to the box, so the number needs no label to be read. */
+.money {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  padding-left: 0.7rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.money:focus-within {
+  border-color: var(--brand);
+}
+
+.money input {
+  border: 0;
+  background: none;
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-family: var(--mono);
+  padding: 0.8rem 0.6rem;
+}
+
+.money input:focus {
+  outline: none;
+}
+
+/* Category as pictures. A dropdown of English words is a wall; seven
+   coloured tiles with a glyph can be chosen without reading at all. */
+.pickgrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+
+.pick {
+  border: 1.5px solid var(--rule);
+  background: var(--surface);
+  border-radius: var(--r-md);
+  padding: 0.5rem 0.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  min-height: 4.25rem;
+}
+
+.pick__art {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--cat, var(--cat-other));
+  position: relative;
+}
+
+.pick__art svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  color: #fff;
+}
+
+.pick__label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+.pick[aria-checked="true"] {
+  border-color: var(--brand);
+  background: var(--brand-wash);
+}
+
+.pick[aria-checked="true"] .pick__label {
+  color: var(--brand);
+}
+
+/* The photo button is the first thing in the sheet and looks like a place a
+   picture goes, rather than a file input nobody recognises. */
+.photo-drop {
+  width: 100%;
+  border: 1.5px dashed var(--rule);
+  background: var(--page);
+  border-radius: var(--r-md);
+  padding: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 700;
+  font-size: 0.9375rem;
+  color: var(--ink-soft);
+  margin-bottom: 1rem;
+  cursor: pointer;
+}
+
+.photo-drop__icon {
+  flex: none;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  display: grid;
+  place-items: center;
+  font-size: 1.5rem;
+  color: var(--ink-faint);
+  overflow: hidden;
+  position: relative;
+}
+
+.photo-drop__icon img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+details#item-more {
+  border: 0;
+  padding: 0;
+  margin: 0 0 0.9rem;
+}
+
+details#item-more summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--brand);
+  padding: 0.4rem 0;
+}
+
+.sheet__actions {
+  display: grid;
+  gap: 0.5rem;
+}
+
+/* A listing in the shop's own catalogue carries its controls. */
+.tile__manage {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.tile__manage .btn {
+  flex: 1;
+  padding: 0.38rem 0.3rem;
+  font-size: 0.8125rem;
+}
+
 /* ---------------------------------------------------------------- avatar */
 
 /*

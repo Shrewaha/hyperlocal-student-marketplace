@@ -316,49 +316,26 @@
         <ul class="rows" id="my-offers"></ul>
         <div class="empty" id="my-offers-empty" hidden></div>
 
-        <div class="section" style="margin-top: 1.5rem">
-          <div class="section__head">
-            <h2>My listings</h2>
-            <span class="side">Shown in search</span>
-          </div>
-          <div class="card">
-            <form id="product-form">
-              <label class="field">
-                <span>Product</span>
-                <input name="name" required maxlength="200" />
-              </label>
-              <div class="row2">
-                <label class="field">
-                  <span>Category</span>
-                  <select name="category" data-categories required></select>
-                </label>
-                <label class="field">
-                  <span>Price (&#8377;)</span>
-                  <input name="price" type="number" min="0" step="0.01" required />
-                </label>
-                <label class="field">
-                  <span>Stock</span>
-                  <input name="stock" type="number" min="0" step="1" value="1" />
-                </label>
-              </div>
-              <label class="field">
-                <span>Specs</span>
-                <input name="specs" maxlength="1000" />
-              </label>
-              <label class="field">
-                <span>Photo (optional)</span>
-                <input name="image" type="file" accept="image/*" />
-                <small class="hint-line" id="image-hint"></small>
-              </label>
-              <div id="image-preview" hidden>
-                <img alt="" id="image-preview-img" class="preview" />
-              </div>
-              <button class="btn btn--primary btn--block" type="submit">Add listing</button>
-              <p class="msg" id="product-msg"></p>
-            </form>
-          </div>
-          <div class="grid" id="my-products"></div>
+      </section>
+
+      <!-- ====================================================== catalogue -->
+      <section id="view-catalogue" hidden>
+        <div class="hero">
+          <h1 data-t="cat.title">My shop</h1>
+          <p data-t="cat.sub">Add what you sell. Students searching nearby will find it.</p>
         </div>
+
+        <!-- One big target, at the top, before the list. Adding is the thing
+             a shopkeeper came here to do. -->
+        <button class="btn btn--primary btn--block btn--big" id="cat-add" type="button">
+          <span data-t="cat.add">Add an item</span>
+        </button>
+
+        <div class="section__head" style="margin-top: 1.25rem">
+          <h2 id="cat-count"></h2>
+        </div>
+        <div class="grid" id="my-products"></div>
+        <div class="empty" id="my-products-empty" hidden></div>
       </section>
 
       <!-- ====================================================== comparison -->
@@ -526,6 +503,13 @@
 
         <div class="section__head"><h2>Settings</h2></div>
         <div class="card">
+          <div class="field">
+            <span data-t="lang.label">भाषा / Language</span>
+            <div class="actions" id="lang-pick">
+              <button class="chip" type="button" data-lang="en">English</button>
+              <button class="chip" type="button" data-lang="hi">हिंदी</button>
+            </div>
+          </div>
           <div class="actions">
             <button class="btn" id="nav-api">Server address</button>
             <button class="btn" id="nav-out">Sign out</button>
@@ -585,6 +569,77 @@
       </form>
     </dialog>
 
+    <!--
+      Adding an item. Two fields are required and everything else is folded
+      away, because a shopkeeper with thirty things to list will not fill in
+      six fields thirty times.
+    -->
+    <dialog id="item-dialog">
+      <form method="dialog" class="sheet" id="item-form">
+        <h2 id="item-title" data-t="add.title">Add an item</h2>
+
+        <button class="photo-drop" type="button" id="item-photo-btn">
+          <span id="item-photo-slot" class="photo-drop__icon" aria-hidden="true">+</span>
+          <span id="item-photo-label" data-t="add.photo">Add a photo</span>
+        </button>
+        <!-- capture asks the camera first on a phone, which is where the
+             item physically is. -->
+        <input id="item-photo" type="file" accept="image/*" capture="environment" class="sr" />
+
+        <label class="field field--big">
+          <span data-t="add.name">What is it?</span>
+          <input name="name" id="item-name" maxlength="200" autocomplete="off" />
+        </label>
+
+        <label class="field field--big">
+          <span data-t="add.price">Price</span>
+          <div class="money">
+            <span aria-hidden="true">&#8377;</span>
+            <input name="price" id="item-price" type="number" inputmode="decimal"
+                   min="0" step="1" />
+          </div>
+        </label>
+
+        <div class="field">
+          <span data-t="add.category">Type</span>
+          <div class="pickgrid" id="item-categories" role="radiogroup"></div>
+        </div>
+
+        <details id="item-more">
+          <summary data-t="add.more">More details</summary>
+          <label class="field">
+            <span data-t="add.specs">Details</span>
+            <input name="specs" id="item-specs" maxlength="1000" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span data-t="add.stock">How many</span>
+            <input name="stock" id="item-stock" type="number" inputmode="numeric"
+                   min="0" step="1" value="1" />
+          </label>
+        </details>
+
+        <p class="msg" id="item-msg"></p>
+
+        <div class="sheet__actions">
+          <button class="btn btn--primary btn--big btn--block" value="save" id="item-save">
+            <span data-t="add.save">Save</span>
+          </button>
+          <button class="btn btn--block" value="more" id="item-save-more">
+            <span data-t="add.saveMore">Save and add another</span>
+          </button>
+          <div class="actions">
+            <button class="btn btn--ghost" value="cancel" formnovalidate id="item-cancel">
+              <span data-t="add.cancel">Cancel</span>
+            </button>
+            <button class="btn btn--ghost btn--danger" value="delete" formnovalidate
+                    id="item-delete" hidden>
+              <span data-t="add.delete">Delete</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="api-dialog">
       <form method="dialog" class="sheet" id="api-form">
         <h2>Server address</h2>
@@ -611,6 +666,7 @@
     <datalist id="known-areas"></datalist>
 
     <script src="config.js"></script>
+    <script src="i18n.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

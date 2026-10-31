@@ -98,6 +98,54 @@
     return svg;
   }
 
+  /* ------------------------------------------------------------ language */
+
+  /*
+   * The shops this is for are counters in Ayodhya, where Devanagari is read
+   * far more easily than English. A form you are guessing the meaning of is
+   * one you fill in slowly and wrongly, so this is not decoration -- it is
+   * whether a shopkeeper lists thirty items or gives up after two.
+   */
+  var LANG_KEY = "marketplace.lang";
+
+  function lang() {
+    var saved = store(localStorage, LANG_KEY);
+    return saved === "hi" ? "hi" : "en";
+  }
+
+  function tr(key, vars) {
+    var table = (window.STRINGS && window.STRINGS[lang()]) || {};
+    var fallback = (window.STRINGS && window.STRINGS.en) || {};
+    var out = table[key] || fallback[key] || key;
+    if (vars) {
+      Object.keys(vars).forEach(function (k) {
+        out = out.replace("{" + k + "}", vars[k]);
+      });
+    }
+    return out;
+  }
+
+  function categoryLabel(c) {
+    if (lang() === "hi" && window.CATEGORY_HI && window.CATEGORY_HI[c]) {
+      return window.CATEGORY_HI[c];
+    }
+    return c;
+  }
+
+  /* Anything carrying data-t is translated in place, so the markup stays
+     readable and the table stays the single source of wording. */
+  function paintLanguage() {
+    document.querySelectorAll("[data-t]").forEach(function (node) {
+      node.textContent = tr(node.getAttribute("data-t"));
+    });
+    document.documentElement.lang = lang();
+    document.querySelectorAll("#lang-pick [data-lang]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-lang") === lang()));
+    });
+    var name = $("#item-name");
+    if (name) name.placeholder = tr("add.name.ph");
+  }
+
   /* -------------------------------------------------------------- avatars */
 
   /*
@@ -328,22 +376,22 @@
    */
   var TABS = {
     out: [
-      { view: "browse", label: "Browse", glyph: "t-browse" },
-      { view: "auth", label: "Sign in", glyph: "t-user" },
+      { view: "browse", label: "nav.browse", glyph: "t-browse" },
+      { view: "auth", label: "nav.signin", glyph: "t-user" },
     ],
     student: [
-      { view: "browse", label: "Browse", glyph: "t-browse" },
-      { view: "post", label: "Post", glyph: "t-post" },
-      { view: "mine", label: "Requests", glyph: "t-list" },
-      { view: "chats", label: "Chats", glyph: "t-chat", badge: true },
-      { view: "account", label: "Account", glyph: "t-user" },
+      { view: "browse", label: "nav.browse", glyph: "t-browse" },
+      { view: "post", label: "nav.post", glyph: "t-post" },
+      { view: "mine", label: "nav.requests", glyph: "t-list" },
+      { view: "chats", label: "nav.chats", glyph: "t-chat", badge: true },
+      { view: "account", label: "nav.account", glyph: "t-user" },
     ],
     shop: [
-      { view: "browse", label: "Browse", glyph: "t-browse" },
-      { view: "requests", label: "Requests", glyph: "t-list" },
-      { view: "offers-mine", label: "Offers", glyph: "t-post" },
-      { view: "chats", label: "Chats", glyph: "t-chat", badge: true },
-      { view: "account", label: "Account", glyph: "t-user" },
+      { view: "requests", label: "nav.requests", glyph: "t-list" },
+      { view: "catalogue", label: "nav.catalogue", glyph: "t-post" },
+      { view: "offers-mine", label: "nav.offers", glyph: "t-browse" },
+      { view: "chats", label: "nav.chats", glyph: "t-chat", badge: true },
+      { view: "account", label: "nav.account", glyph: "t-user" },
     ],
   };
 
@@ -364,7 +412,7 @@
       var b = el("button", "tab");
       b.type = "button";
       b.appendChild(icon(t.glyph));
-      b.appendChild(el("span", null, t.label));
+      b.appendChild(el("span", null, tr(t.label)));
       if (t.badge && state.unread > 0) {
         b.appendChild(el("span", "tab__badge", state.unread > 9 ? "9+" : String(state.unread)));
       }
@@ -390,6 +438,7 @@
     "thread",
     "alerts",
     "shop",
+    "catalogue",
     "account",
   ];
 
@@ -415,7 +464,8 @@
     }
     if (name === "mine") loadMyRequests();
     if (name === "requests") loadOpenRequests();
-    if (name === "offers-mine") loadMyOffers().then(loadMyProducts).catch(function () {});
+    if (name === "offers-mine") loadMyOffers();
+    if (name === "catalogue") loadMyProducts();
     if (name === "chats") loadThreads();
     if (name === "alerts") loadAlerts();
     if (name === "account") paintAccount();
@@ -969,25 +1019,211 @@
       });
   }
 
+  /* ------------------------------------------------------- the catalogue */
+
+  var editing = null;          /* the listing being changed, or null to add */
+  var itemPhoto = null;        /* a chosen photo, as a data URL */
+  var lastCategory = null;     /* shops add like things in a row */
+
+  function openItemSheet(product) {
+    editing = product || null;
+    itemPhoto = null;
+
+    var f = $("#item-form");
+    text($("#item-msg"), "");
+    text($("#item-title"), tr(editing ? "add.edit" : "add.title"));
+    show($("#item-delete"), !!editing);
+    $("#item-more").open = false;
+
+    f.elements.name.value = editing ? editing.name : "";
+    f.elements.price.value = editing ? editing.price : "";
+    f.elements.specs.value = editing && editing.specs ? editing.specs : "";
+    f.elements.stock.value = editing ? editing.stock : 1;
+
+    paintItemPhoto(editing && editing.has_image
+      ? apiBase() + "/api/products/" + editing.id + "/image"
+      : null);
+
+    paintCategoryPicker(
+      editing ? editing.category : lastCategory || state.categories[0]
+    );
+
+    $("#item-dialog").showModal();
+    /* The name is what they came to type; put them in it. */
+    setTimeout(function () {
+      f.elements.name.focus();
+    }, 50);
+  }
+
+  function paintItemPhoto(src) {
+    var slot = $("#item-photo-slot");
+    slot.textContent = src ? "" : "+";
+    if (src) {
+      var img = document.createElement("img");
+      img.src = src;
+      img.alt = "";
+      slot.appendChild(img);
+    }
+    text($("#item-photo-label"), tr(src ? "add.retake" : "add.photo"));
+  }
+
+  var chosenCategory = null;
+
+  function paintCategoryPicker(selected) {
+    chosenCategory = selected || state.categories[0] || "Other";
+    var box = $("#item-categories");
+    box.textContent = "";
+    state.categories.forEach(function (c) {
+      var b = el("button", "pick");
+      b.type = "button";
+      b.setAttribute("role", "radio");
+      b.setAttribute("aria-checked", String(c === chosenCategory));
+      b.appendChild(artBlock(c, "pick__art"));
+      b.appendChild(el("span", "pick__label", categoryLabel(c)));
+      b.addEventListener("click", function () {
+        paintCategoryPicker(c);
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function saveItem(keepOpen) {
+    var f = $("#item-form").elements;
+    var msg = $("#item-msg");
+    var name = f.name.value.trim();
+    var price = f.price.value;
+
+    /* Only two things are required, and each says which is missing rather
+       than failing silently on a form validation nobody can see. */
+    msg.className = "msg msg--bad";
+    if (!name) {
+      text(msg, tr("add.needName"));
+      f.name.focus();
+      return Promise.resolve(false);
+    }
+    if (price === "" || Number(price) < 0) {
+      text(msg, tr("add.needPrice"));
+      f.price.focus();
+      return Promise.resolve(false);
+    }
+    text(msg, "");
+
+    var body = {
+      name: name,
+      category: chosenCategory,
+      price: Number(price),
+      stock: Number(f.stock.value || 1),
+      specs: f.specs.value.trim() || null,
+    };
+    if (itemPhoto !== null) body.image = itemPhoto;
+
+    var call = editing
+      ? request("/api/products/" + editing.id, { method: "PATCH", body: body })
+      : request("/api/products", { method: "POST", body: body });
+
+    return call.then(
+      function () {
+        lastCategory = chosenCategory;
+        toast(tr("add.saved"), "ok");
+        loadMyProducts();
+        if (keepOpen) {
+          /* Cleared and left open, with the category kept: a shop listing
+             thirty things is listing thirty similar things. */
+          editing = null;
+          itemPhoto = null;
+          var g = $("#item-form").elements;
+          g.name.value = "";
+          g.price.value = "";
+          g.specs.value = "";
+          g.stock.value = 1;
+          paintItemPhoto(null);
+          show($("#item-delete"), false);
+          text($("#item-title"), tr("add.title"));
+          g.name.focus();
+        }
+        return true;
+      },
+      function (err) {
+        msg.className = "msg msg--bad";
+        text(msg, err.message);
+        toast(err.message, "bad", 6000);
+        return false;
+      }
+    );
+  }
+
+  function deleteItem() {
+    if (!editing) return;
+    if (!window.confirm(tr("add.deleteSure"))) return;
+    var id = editing.id;
+    request("/api/products/" + id, { method: "DELETE" }).then(
+      function () {
+        toast(tr("add.deleted"), "ok");
+        $("#item-dialog").close("done");
+        loadMyProducts();
+      },
+      function (err) {
+        toast(err.message, "bad", 6000);
+      }
+    );
+  }
+
   function loadMyProducts() {
     var grid = $("#my-products");
+    var empty = $("#my-products-empty");
     grid.textContent = "";
+    show(empty, false);
+
     return request("/api/products/mine")
       .then(function (data) {
-        (data.products || []).forEach(function (p) {
+        var items = data.products || [];
+        text(
+          $("#cat-count"),
+          items.length === 1
+            ? tr("cat.count.one")
+            : items.length
+            ? tr("cat.count.many", { n: items.length })
+            : ""
+        );
+
+        if (!items.length) {
+          emptyState(empty, tr("cat.empty.title"), tr("cat.empty.body"), {
+            label: tr("cat.add"),
+            onClick: function () {
+              openItemSheet(null);
+            },
+          });
+          return;
+        }
+
+        items.forEach(function (p) {
           var card = el("article", "tile");
           card.appendChild(artBlock(p.category, "tile__art", p));
           var body = el("div", "tile__body");
           body.appendChild(el("h3", "tile__name", p.name));
-          body.appendChild(el("span", "tile__meta", "stock " + p.stock));
+          body.appendChild(el("span", "tile__meta", categoryLabel(p.category)));
           var foot = el("div", "tile__foot");
           foot.appendChild(el("span", "price", rupees(p.price)));
           body.appendChild(foot);
+
+          /* Tapping the card edits it; a shopkeeper correcting a price
+             should not have to find a menu. */
+          var manage = el("div", "tile__manage");
+          var edit = el("button", "btn btn--sm btn--primary", tr("edit.button"));
+          edit.type = "button";
+          edit.addEventListener("click", function () {
+            openItemSheet(p);
+          });
+          manage.appendChild(edit);
+          body.appendChild(manage);
+
           card.appendChild(body);
           grid.appendChild(card);
         });
       })
-      .catch(function () {});
+      .catch(function (err) {
+        emptyState(empty, "Could not load your items.", err.message);
+      });
   }
 
   /* ----------------------------------------------- the comparison screen */
@@ -1746,65 +1982,64 @@
 
   var pendingImage = null;
 
-  $("#product-form").elements.image.addEventListener("change", function (e) {
-    var hint = $("#image-hint");
-    var file = e.target.files && e.target.files[0];
-    pendingImage = null;
-    show($("#image-preview"), false);
-    hint.className = "hint-line";
-    hint.textContent = "";
-    if (!file) return;
+  $("#cat-add").addEventListener("click", function () {
+    openItemSheet(null);
+  });
 
-    hint.textContent = "Preparing\u2026";
+  $("#item-photo-btn").addEventListener("click", function () {
+    $("#item-photo").click();
+  });
+
+  $("#item-photo").addEventListener("change", function (e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    text($("#item-msg"), "");
     shrinkImage(file, 900, 0.72).then(
       function (dataUrl) {
-        pendingImage = dataUrl;
-        $("#image-preview-img").src = dataUrl;
-        show($("#image-preview"), true);
-        var kb = Math.round((dataUrl.length * 3) / 4 / 1024);
-        hint.className = "hint-line hint-line--ok";
-        hint.textContent = "Ready, about " + kb + " KB after resizing.";
+        itemPhoto = dataUrl;
+        paintItemPhoto(dataUrl);
       },
       function (err) {
-        hint.className = "hint-line hint-line--warn";
-        hint.textContent = err.message;
+        toast(err.message, "bad", 6000);
       }
     );
   });
 
-  $("#product-form").addEventListener("submit", function (e) {
+  /*
+   * The two save buttons submit the form, which would close the sheet before
+   * the request finished -- and "save and add another" must not close it at
+   * all. So both are handled here and the dialog is closed only on success.
+   */
+  $("#item-save").addEventListener("click", function (e) {
     e.preventDefault();
-    var f = e.target.elements;
-    var msg = $("#product-msg");
-    msg.className = "msg";
-    text(msg, "Adding…");
+    saveItem(false).then(function (ok) {
+      if (ok) $("#item-dialog").close("done");
+    });
+  });
 
-    request("/api/products", {
-      method: "POST",
-      body: {
-        name: f.name.value.trim(),
-        category: f.category.value,
-        specs: f.specs.value.trim() || null,
-        price: Number(f.price.value),
-        stock: Number(f.stock.value || 1),
-        image: pendingImage,
-      },
-    }).then(
-      function () {
-        e.target.reset();
-        pendingImage = null;
-        show($("#image-preview"), false);
-        text($("#image-hint"), "");
-        msg.className = "msg msg--ok";
-        text(msg, "Listed.");
-        toast("Listing added.", "ok");
-        loadMyProducts();
-      },
-      function (err) {
-        msg.className = "msg msg--bad";
-        text(msg, err.message);
-      }
-    );
+  $("#item-save-more").addEventListener("click", function (e) {
+    e.preventDefault();
+    saveItem(true);
+  });
+
+  $("#item-cancel").addEventListener("click", function (e) {
+    e.preventDefault();
+    $("#item-dialog").close("cancel");
+  });
+
+  $("#item-delete").addEventListener("click", function (e) {
+    e.preventDefault();
+    deleteItem();
+  });
+
+  document.querySelectorAll("#lang-pick [data-lang]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      store(localStorage, LANG_KEY, b.getAttribute("data-lang"));
+      paintLanguage();
+      paintTabs();
+      /* Anything already drawn carries the old wording. */
+      if (state.view === "catalogue") loadMyProducts();
+    });
   });
 
   $("#offer-dialog").addEventListener("close", function () {
@@ -2000,12 +2235,14 @@
 
   if (!apiBase()) {
     show($("#no-api"), true);
+    paintLanguage();
     paintAuthMode();
     paintBrowseIntro();
     paintTabs();
     return;
   }
 
+  paintLanguage();
   paintAuthMode();
   loadCategories()
     .then(loadAreas)
