@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.webkit.GeolocationPermissions;
+import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -37,10 +38,12 @@ public class MainActivity extends Activity {
             "https://appassets.androidplatform.net/assets/web/index.html";
 
     private static final int GEOLOCATION_REQUEST = 1;
+    private static final int CAMERA_REQUEST = 2;
 
     private WebView web;
     private String pendingGeolocationOrigin;
     private GeolocationPermissions.Callback pendingGeolocationCallback;
+    private PermissionRequest pendingCameraRequest;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -78,6 +81,39 @@ public class MainActivity extends Activity {
          * own permission, and once back to the page.
          */
         web.setWebChromeClient(new WebChromeClient() {
+            /*
+             * The barcode scanner asks the page for a camera. A WebView
+             * refuses that by default and, as with geolocation, tells the
+             * page nothing -- so the scanner would work perfectly in a
+             * browser and appear completely dead in the APK.
+             */
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                boolean wantsCamera = false;
+                for (String resource : request.getResources()) {
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
+                        wantsCamera = true;
+                        break;
+                    }
+                }
+                if (!wantsCamera) {
+                    request.deny();
+                    return;
+                }
+
+                if (checkSelfPermission(Manifest.permission.CAMERA)
+                        == PackageManager.PERMISSION_GRANTED) {
+                    // Only the bundled pages run here, so there is no
+                    // third-party origin to weigh.
+                    request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+                    return;
+                }
+
+                pendingCameraRequest = request;
+                requestPermissions(new String[]{Manifest.permission.CAMERA},
+                        CAMERA_REQUEST);
+            }
+
             @Override
             public void onGeolocationPermissionsShowPrompt(
                     String origin, GeolocationPermissions.Callback callback) {
@@ -143,9 +179,7 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
                                            int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
-        if (requestCode != GEOLOCATION_REQUEST || pendingGeolocationCallback == null) {
-            return;
-        }
+
         boolean granted = false;
         for (int result : results) {
             if (result == PackageManager.PERMISSION_GRANTED) {
@@ -153,9 +187,25 @@ public class MainActivity extends Activity {
                 break;
             }
         }
-        pendingGeolocationCallback.invoke(pendingGeolocationOrigin, granted, false);
-        pendingGeolocationCallback = null;
-        pendingGeolocationOrigin = null;
+
+        if (requestCode == CAMERA_REQUEST && pendingCameraRequest != null) {
+            if (granted) {
+                pendingCameraRequest.grant(
+                        new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+            } else {
+                // Denied has to be passed on too. Left unanswered the page
+                // waits forever on a promise that never settles.
+                pendingCameraRequest.deny();
+            }
+            pendingCameraRequest = null;
+            return;
+        }
+
+        if (requestCode == GEOLOCATION_REQUEST && pendingGeolocationCallback != null) {
+            pendingGeolocationCallback.invoke(pendingGeolocationOrigin, granted, false);
+            pendingGeolocationCallback = null;
+            pendingGeolocationOrigin = null;
+        }
     }
 
     /** Keeps the current screen across a rotation instead of reloading. */

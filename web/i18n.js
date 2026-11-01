@@ -56,6 +56,14 @@ window.STRINGS = {
     "add.needName": "Give it a name.",
     "add.needPrice": "Give it a price.",
 
+    "scan.button": "Scan barcode",
+    "scan.stop": "Stop",
+    "scan.looking": "Point at the barcode\u2026",
+    "scan.known": "Found: {name}",
+    "scan.new": "New barcode. Type the name once and every shop gets it.",
+    "scan.none": "Scanning needs the phone app. Type the name here instead.",
+    "scan.denied": "Camera not allowed. Type the name instead.",
+
     "edit.button": "Edit",
     "lang.label": "भाषा / Language",
   },
@@ -98,6 +106,14 @@ window.STRINGS = {
     "add.deleted": "हटा दिया।",
     "add.needName": "नाम लिखें।",
     "add.needPrice": "दाम लिखें।",
+
+    "scan.button": "बारकोड स्कैन करें",
+    "scan.stop": "रोकें",
+    "scan.looking": "बारकोड पर कैमरा रखें…",
+    "scan.known": "मिल गया: {name}",
+    "scan.new": "नया बारकोड। एक बार नाम लिखें, सब दुकानों को मिल जाएगा।",
+    "scan.none": "स्कैन के लिए फ़ोन ऐप चाहिए। यहाँ नाम लिख दें।",
+    "scan.denied": "कैमरा की अनुमति नहीं है। नाम लिख दें।",
 
     "edit.button": "बदलें",
     "lang.label": "भाषा / Language",
