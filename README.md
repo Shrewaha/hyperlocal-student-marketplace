@@ -159,6 +159,7 @@ have accounts.
 | `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty | Until `SMTP_USER` is set, mail prints to the service log instead of being sent. For Gmail the password is a 16-character App Password, not the account password. |
 | `APP_URL` | empty | Where the browser client lives. Used to build the link inside a password-reset email; without it the email carries a code to paste instead. |
 | `SESSION_TTL_DAYS` | `30` | How long a sign-in survives without being used. The window slides on every request. |
+| `MIN_SIGNUP_AGE` | `14` | The youngest age that may hold an account. Note that the DPDP Act treats under-18s as children and expects verifiable parental consent, which this app does not collect -- so a floor below 18 means holding children's data without it. |
 | `RESET_TTL_MINUTES` | `60` | How long a password-reset link stays valid. |
 
 ### 2. Frontend

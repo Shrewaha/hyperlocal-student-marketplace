@@ -236,17 +236,26 @@
             </label>
 
             <!--
-              The DPDP Act treats anyone under 18 as a child and wants
-              verifiable parental consent, which a campus marketplace has no
-              way to collect. First-year students are often 17, so the
-              question has to be asked rather than assumed.
+              An age, not a yes/no tick. A number says which accounts belong
+              to under-18s, which the marketplace has to be able to answer
+              now that it admits them; "not an adult" says nothing useful.
 
-              Last thing before the button, not buried among the fields: it is
-              a declaration about the person, not another detail about them.
+              inputmode="numeric" so a phone offers the number pad, but no min
+              attribute: the browser's own validation fires before this app's
+              code and shows a bubble in its own wording, which is not how
+              every other error here reads. The app says it, and the API
+              refuses it again regardless.
             -->
-            <label class="check" id="age-gate" hidden>
-              <input type="checkbox" name="is_adult" />
-              <span>I am 18 years old or over</span>
+            <label class="field" id="age-field" hidden>
+              <span>Age</span>
+              <input
+                name="age"
+                type="number"
+                step="1"
+                inputmode="numeric"
+                placeholder="19"
+              />
+              <small class="hint-line">You must be at least 14.</small>
             </label>
 
             <button class="btn btn--primary btn--block" type="submit" id="auth-go">Sign in</button>
@@ -520,6 +529,11 @@
             <label class="field">
               <span>Name</span>
               <input name="name" maxlength="120" required />
+            </label>
+
+            <label class="field">
+              <span>Age</span>
+              <input name="age" type="number" step="1" inputmode="numeric" />
             </label>
 
             <label class="field" id="profile-shop-name" hidden>

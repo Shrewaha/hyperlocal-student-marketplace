@@ -556,6 +556,8 @@
     var f = $("#profile-form").elements;
     f.name.value = u.name || "";
     f.area.value = u.area || "";
+    /* Blank for the accounts that predate the age field, rather than 0. */
+    f.age.value = u.age === null || u.age === undefined ? "" : u.age;
     if (isShop) {
       f.shop_name.value = u.shop_name || "";
       f.phone.value = u.phone || "";
@@ -793,6 +795,11 @@
 
   /* ----------------------------------------------------------------- auth */
 
+  /* Mirrors MIN_SIGNUP_AGE on the API. Kept here as well so the form can
+     answer immediately; the server is what actually enforces it. Change
+     both together, or the form will promise something the API refuses. */
+  var MIN_AGE = 14;
+
   var registering = false;
 
   /* Boot does its own navigating. Until it finishes, an expired token should
@@ -814,7 +821,7 @@
     text($("#auth-go"), registering ? "Create account" : "Sign in");
     text($("#auth-switch"), registering ? "I already have an account" : "Create an account");
     show($("#reg-only"), registering);
-    show($("#age-gate"), registering);
+    show($("#age-field"), registering);
     /* Nothing to recover when there is no account yet. */
     show($("#auth-alt"), !registering);
     $("#auth-form").elements.password.autocomplete = registering
@@ -1984,10 +1991,15 @@
           nameRow.appendChild(document.createTextNode(u.shop_name || u.name));
           if (u.blocked) nameRow.appendChild(el("span", "badge-off", " SUSPENDED"));
           if (u.is_admin) nameRow.appendChild(el("span", "badge-owner", " OWNER"));
+          /* The marketplace admits 14-year-olds, so which accounts belong to
+             children is something you have to be able to see at a glance
+             rather than work out from a number in the line below. */
+          if (u.minor) nameRow.appendChild(el("span", "badge-minor", " UNDER 18"));
           main.appendChild(nameRow);
           main.appendChild(
             el("div", "row__meta",
                [u.email, u.area,
+                u.age ? "age " + u.age : null,
                 u.role === "shop"
                   ? u.listings + " listed \u00b7 " + u.offers + " offers"
                   : u.requests + " requests"
@@ -2470,12 +2482,26 @@
     }
 
     var role = f.role.value;
-    /* Checked here as well as on the server, so the answer is "tick the box"
-       rather than a refusal that arrives after a round trip. */
-    if (!f.is_adult.checked) {
+    /* Checked here as well as on the server, so a 13-year-old is told so
+       immediately rather than after a round trip to a sleeping free-tier
+       host. The server checks it again; this is only courtesy. */
+    var age = parseInt(f.age.value, 10);
+    if (!f.age.value.trim() || isNaN(age)) {
       msg.className = "msg msg--bad";
-      text(msg, "Please confirm you are 18 or over to create an account.");
-      f.is_adult.focus();
+      text(msg, "Please enter your age.");
+      f.age.focus();
+      return;
+    }
+    if (age < MIN_AGE) {
+      msg.className = "msg msg--bad";
+      text(msg, "You must be at least " + MIN_AGE + " to use this marketplace.");
+      f.age.focus();
+      return;
+    }
+    if (age > 120) {
+      msg.className = "msg msg--bad";
+      text(msg, "Please check that age.");
+      f.age.focus();
       return;
     }
 
@@ -2490,7 +2516,7 @@
         area: f.area.value.trim() || null,
         shop_name: role === "shop" ? f.shop_name.value.trim() : null,
         phone: role === "shop" ? f.phone.value.trim() || null : null,
-        is_adult: true,
+        age: age,
       },
     })
       .then(function () {
@@ -2829,6 +2855,21 @@
       name: f.name.value.trim(),
       area: f.area.value.trim(),
     };
+
+    /* Left blank means "leave it alone", which is what an account older than
+       the age field needs. A number below the floor is caught here and again
+       on the API. */
+    if (f.age.value.trim()) {
+      var age = parseInt(f.age.value, 10);
+      if (isNaN(age) || age < MIN_AGE || age > 120) {
+        msg.className = "msg msg--bad";
+        text(msg, "Age must be a number from " + MIN_AGE + " to 120.");
+        f.age.focus();
+        return;
+      }
+      body.age = age;
+    }
+
     /* null means untouched; "" means remove. Only send it when one of those
        was actually chosen. */
     if (state.avatar !== null) body.avatar = state.avatar;

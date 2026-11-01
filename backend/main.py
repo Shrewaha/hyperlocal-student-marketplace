@@ -57,6 +57,19 @@ ADMIN_EMAILS = {
     if e.strip()
 }
 
+# The youngest age that may hold an account.
+#
+# Set to 14 deliberately. Note what it means: the DPDP Act treats anyone
+# under 18 as a child and expects verifiable parental consent before their
+# data is held, and this marketplace collects none. Accounts between 14 and
+# 17 are therefore held without that consent. Raising this to 18 is a
+# one-line change here, and an environment variable on a running service.
+MIN_SIGNUP_AGE = int(os.getenv("MIN_SIGNUP_AGE", "14"))
+
+# Nothing deep: an upper bound so a typo lands as a refusal rather than as
+# a 900-year-old shopkeeper.
+MAX_SIGNUP_AGE = 120
+
 # How long a sign-in lasts without being used. The window slides: every
 # authenticated request pushes it out again, so somebody who opens the app
 # each week is never signed out, while a phone that stops being used goes
@@ -279,11 +292,17 @@ def init_db():
         for col, decl in (("address", "TEXT"), ("lat", "REAL"), ("lng", "REAL"),
                           ("about", "TEXT"), ("avatar", "BLOB"),
                           ("avatar_type", "TEXT"), ("blocked_at", "DATETIME"),
-                          # When the account holder confirmed they are 18 or
-                          # over. The DPDP Act treats under-18s as children and
-                          # wants verifiable parental consent, which a campus
-                          # marketplace cannot collect -- so the app asks, and
-                          # keeps the answer.
+                          # The age given at signup. A number rather than the
+                          # yes/no tick this replaces, because "17" is an
+                          # answer the marketplace may need to act on and
+                          # "not an adult" is not.
+                          ("age", "INTEGER"),
+                          # From the release before this one, which asked
+                          # only whether the holder was 18 or over. Age
+                          # supersedes it and nothing writes it any more.
+                          # Kept because dropping a column in SQLite means
+                          # rebuilding the table, and an unused column is
+                          # cheaper than that.
                           ("adult_confirmed_at", "DATETIME")):
             if col not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (col, decl))
@@ -710,6 +729,7 @@ def public_user(user: dict) -> dict:
         "lat": user.get("lat"),
         "lng": user.get("lng"),
         "about": user.get("about"),
+        "age": user.get("age"),
         "has_avatar": user.get("avatar") is not None,
         "is_admin": is_admin(user),
         "notify_email": bool(user.get("notify_email", 1) in (1, None)),
@@ -730,10 +750,10 @@ class RegisterIn(BaseModel):
     # Shops only. It is shown to a student on that shop's offers, which is
     # how the two actually reach each other once a price is agreed.
     phone: Optional[str] = Field(default=None, max_length=32)
-    # Defaults to False so that an old client, or a request that simply
-    # leaves the field out, is refused rather than quietly treated as a
-    # confirmation nobody gave.
-    is_adult: bool = False
+    # Optional in the schema so that leaving it out produces the sentence
+    # below rather than pydantic's "Input should be a valid integer", which
+    # a shopkeeper cannot act on. The endpoint is what insists on it.
+    age: Optional[int] = Field(default=None, ge=0, le=MAX_SIGNUP_AGE)
 
 
 class ForgotIn(BaseModel):
@@ -760,6 +780,10 @@ class ProfileIn(BaseModel):
     area: Optional[str] = Field(default=None, max_length=120)
     shop_name: Optional[str] = Field(default=None, max_length=160)
     phone: Optional[str] = Field(default=None, max_length=32)
+    # Editable because a number typed once into a signup form is a number
+    # typed wrong sometimes, and an account stuck at the wrong age with no
+    # way to fix it is the password-reset problem in miniature.
+    age: Optional[int] = Field(default=None, ge=0, le=MAX_SIGNUP_AGE)
     address: Optional[str] = Field(default=None, max_length=400)
     about: Optional[str] = Field(default=None, max_length=600)
     lat: Optional[float] = Field(default=None, ge=-90, le=90)
@@ -866,10 +890,12 @@ def register(data: RegisterIn, background: BackgroundTasks, request: Request,
         raise HTTPException(400, "role must be 'student' or 'shop'")
     if data.role == "shop" and not (data.shop_name or "").strip():
         raise HTTPException(400, "shop_name is required for shop accounts")
-    if not data.is_adult:
+    if data.age is None:
+        raise HTTPException(400, "Please enter your age.")
+    if data.age < MIN_SIGNUP_AGE:
         raise HTTPException(
             400,
-            "You must confirm you are 18 or over to use this marketplace.")
+            "You must be at least %d to use this marketplace." % MIN_SIGNUP_AGE)
 
     email = data.email.lower().strip()
     if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
@@ -877,12 +903,12 @@ def register(data: RegisterIn, background: BackgroundTasks, request: Request,
 
     cur = conn.execute(
         "INSERT INTO users (name, email, password, role, area, shop_name, "
-        "phone, adult_confirmed_at) VALUES (?,?,?,?,?,?,?,?)",
+        "phone, age) VALUES (?,?,?,?,?,?,?,?)",
         (data.name.strip(), email, hash_password(data.password), data.role,
          normalize_area(data.area),
          (data.shop_name or "").strip() or None,
          normalize_phone(data.phone) if data.role == "shop" else None,
-         stamp(utcnow())),
+         data.age),
     )
     user_id = cur.lastrowid
     conn.commit()                       # commit BEFORE queueing the email
@@ -1091,6 +1117,14 @@ def update_me(data: ProfileIn,
         put("name", name)
     if data.area is not None:
         put("area", normalize_area(data.area))
+    if data.age is not None:
+        # The same floor as signup. Correcting a typo is allowed; editing
+        # your way under the minimum after the fact is not.
+        if data.age < MIN_SIGNUP_AGE:
+            raise HTTPException(
+                400,
+                "Age cannot be below %d on this marketplace." % MIN_SIGNUP_AGE)
+        put("age", data.age)
     if data.phone is not None:
         put("phone", normalize_phone(data.phone))
     if data.address is not None:
@@ -1485,7 +1519,7 @@ def admin_users(q: Optional[str] = None, role: Optional[str] = None,
     """Every account, blocked ones included -- they are the point."""
     sql = (
         "SELECT u.id, u.name, u.email, u.role, u.area, u.shop_name, u.phone, "
-        "       u.blocked_at, u.created_at, "
+        "       u.age, u.blocked_at, u.created_at, "
         "       (SELECT COUNT(*) FROM products p WHERE p.shop_id = u.id) AS listings, "
         "       (SELECT COUNT(*) FROM offers o WHERE o.shop_id = u.id) AS offers, "
         "       (SELECT COUNT(*) FROM requests r WHERE r.student_id = u.id) AS requests "
@@ -1505,6 +1539,11 @@ def admin_users(q: Optional[str] = None, role: Optional[str] = None,
         "users": [{
             **dict(r),
             "blocked": r["blocked_at"] is not None,
+            # Computed here rather than stored, so it cannot go stale and
+            # cannot disagree with the age beside it. The marketplace now
+            # admits 14-year-olds, which makes "is this account a child"
+            # a question an owner has to be able to answer.
+            "minor": r["age"] is not None and r["age"] < 18,
             "is_admin": (r["email"] or "").lower() in ADMIN_EMAILS,
         } for r in rows]
     }

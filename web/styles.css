@@ -825,6 +825,18 @@ button {
   padding: 0.1rem 0.35rem;
 }
 
+/* Amber, not red: an account belonging to someone under 18 is a fact to
+   notice, not a fault to fix. */
+.badge-minor {
+  font-size: 0.625rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0.1rem 0.35rem;
+}
+
 /* ------------------------------------------------- catalogue entry */
 
 /*
