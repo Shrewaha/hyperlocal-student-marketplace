@@ -6,6 +6,29 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-01
+
+### Added
+
+- **Barcode scanning on the add-item sheet.** Point the camera, and the name
+  fills itself in.
+- **A shared barcode catalogue.** The first shop to scan a code types the
+  name once; every shop that scans it afterwards gets it filled in. A single
+  shop's app could not do this -- it works only because many shops sit behind
+  one catalogue, and it gets faster the more of them there are.
+- Open Food Facts is consulted once for a code nobody has seen, and the
+  answer kept, so the question is asked once for the whole marketplace rather
+  than once per shop. A name a shopkeeper typed always wins over it.
+- Camera access bridged through the Android WebView, which refuses it by
+  default and tells the page nothing.
+
+### Note
+
+Loose components, unpackaged goods and anything sold by weight have no
+barcode; typing stays the fastest route for those. `BarcodeDetector` needs
+Android WebView 83 or newer, and is absent on desktop Firefox and Safari --
+where the sheet says so and typing carries on working.
+
 ## [1.8.0] - 2026-10-31
 
 ### Added
@@ -209,7 +232,8 @@ cheapest first, and the student is emailed as each one lands.
   approved by hand.
 - The backend is not hosted anywhere, so each user runs it locally for now.
 
-[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/shrewaha/hyperlocal-student-marketplace/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.9.0
 [1.8.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.8.0
 [1.7.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.7.0
 [1.6.0]: https://github.com/shrewaha/hyperlocal-student-marketplace/releases/tag/v1.6.0

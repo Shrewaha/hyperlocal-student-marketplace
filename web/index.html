@@ -627,6 +627,25 @@
       <form method="dialog" class="sheet" id="item-form">
         <h2 id="item-title" data-t="add.title">Add an item</h2>
 
+        <!-- Scanning comes before typing, because for anything in a packet
+             it replaces the typing entirely. -->
+        <button class="btn btn--block btn--big scan-btn" type="button" id="item-scan">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.9" stroke-linecap="round">
+            <path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2" />
+            <path d="M7 8v8M10.5 8v8M14 8v8M17 8v8" />
+          </svg>
+          <span data-t="scan.button">Scan barcode</span>
+        </button>
+        <div class="scanner" id="scanner" hidden>
+          <video id="scan-video" playsinline muted></video>
+          <div class="scanner__line" aria-hidden="true"></div>
+          <button class="btn btn--sm scanner__stop" type="button" id="scan-stop">
+            <span data-t="scan.stop">Stop</span>
+          </button>
+        </div>
+        <p class="hint-line" id="scan-hint"></p>
+
         <button class="photo-drop" type="button" id="item-photo-btn">
           <span id="item-photo-slot" class="photo-drop__icon" aria-hidden="true">+</span>
           <span id="item-photo-label" data-t="add.photo">Add a photo</span>

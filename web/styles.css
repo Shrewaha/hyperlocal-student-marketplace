@@ -687,6 +687,73 @@ button {
   color: var(--best);
 }
 
+/* --------------------------------------------------------------- scanner */
+
+.scan-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.scan-btn svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.scanner {
+  position: relative;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: #000;
+  margin-bottom: 0.5rem;
+  aspect-ratio: 4 / 3;
+}
+
+.scanner video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* A line that sweeps, so it is obvious the camera is live and looking --
+   a still picture of a shelf gives no sign anything is happening. */
+.scanner__line {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  height: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+  animation: sweep 2s ease-in-out infinite alternate;
+}
+
+@keyframes sweep {
+  from {
+    top: 22%;
+  }
+  to {
+    top: 78%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scanner__line {
+    animation: none;
+    top: 50%;
+  }
+}
+
+.scanner__stop {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+}
+
 /* ----------------------------------------------------------------- stars */
 
 .stars {

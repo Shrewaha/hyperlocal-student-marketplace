@@ -1036,6 +1036,9 @@
   function openItemSheet(product) {
     editing = product || null;
     itemPhoto = null;
+    scannedCode = (product && product.barcode) || null;
+    stopScanning();
+    text($("#scan-hint"), "");
 
     var f = $("#item-form");
     text($("#item-msg"), "");
@@ -1061,6 +1064,124 @@
     setTimeout(function () {
       f.elements.name.focus();
     }, 50);
+  }
+
+  /* --------------------------------------------------------------- scan */
+
+  /*
+   * Reading a barcode with the browser's own detector.
+   *
+   * BarcodeDetector ships in Chromium, which is what the Android WebView is,
+   * so on the phones this is built for there is nothing to download. Where it
+   * is missing -- desktop Firefox and Safari -- the button says so and typing
+   * carries on working, rather than the page pretending to scan.
+   */
+  var scanStream = null;
+  var scanTimer = null;
+  var scannedCode = null;
+
+  function scanSupported() {
+    return typeof window.BarcodeDetector === "function";
+  }
+
+  function stopScanning() {
+    clearInterval(scanTimer);
+    scanTimer = null;
+    if (scanStream) {
+      scanStream.getTracks().forEach(function (track) {
+        track.stop();
+      });
+      scanStream = null;
+    }
+    var video = $("#scan-video");
+    if (video) video.srcObject = null;
+    show($("#scanner"), false);
+  }
+
+  function startScanning() {
+    var hint = $("#scan-hint");
+    hint.className = "hint-line";
+
+    if (!scanSupported()) {
+      hint.className = "hint-line hint-line--warn";
+      hint.textContent = tr("scan.none");
+      return;
+    }
+
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: "environment" } })
+      .then(function (stream) {
+        scanStream = stream;
+        var video = $("#scan-video");
+        video.srcObject = stream;
+        video.play();
+        show($("#scanner"), true);
+        hint.textContent = tr("scan.looking");
+
+        var detector;
+        try {
+          detector = new window.BarcodeDetector({
+            formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"],
+          });
+        } catch (e) {
+          /* On Android the detector is backed by Play Services, so the
+             constructor can throw on a device without them even though the
+             class itself exists. Checking for the class is not enough. */
+          stopScanning();
+          hint.className = "hint-line hint-line--warn";
+          hint.textContent = tr("scan.none");
+          return;
+        }
+
+        scanTimer = setInterval(function () {
+          detector
+            .detect(video)
+            .then(function (found) {
+              if (!found.length) return;
+              var code = found[0].rawValue;
+              stopScanning();
+              resolveBarcode(code);
+            })
+            .catch(function () {
+              /* A frame that cannot be read is ordinary; the next one is
+                 along in a moment. */
+            });
+        }, 400);
+      })
+      .catch(function () {
+        hint.className = "hint-line hint-line--warn";
+        hint.textContent = tr("scan.denied");
+      });
+  }
+
+  function resolveBarcode(code) {
+    var hint = $("#scan-hint");
+    scannedCode = code;
+    hint.className = "hint-line";
+    hint.textContent = "\u2026";
+
+    request("/api/barcode/" + encodeURIComponent(code)).then(
+      function (data) {
+        var f = $("#item-form").elements;
+        if (data.found) {
+          f.name.value = data.name;
+          if (data.specs && !f.specs.value) f.specs.value = data.specs;
+          if (data.category) paintCategoryPicker(data.category);
+          hint.className = "hint-line hint-line--ok";
+          hint.textContent = tr("scan.known", { name: data.name });
+          /* The name is settled; the price is what is left. */
+          f.price.focus();
+        } else {
+          hint.className = "hint-line hint-line--warn";
+          hint.textContent = tr("scan.new");
+          f.name.focus();
+        }
+      },
+      function (err) {
+        hint.className = "hint-line hint-line--warn";
+        hint.textContent = err.message;
+      }
+    );
   }
 
   function paintItemPhoto(src) {
@@ -1123,6 +1244,8 @@
       stock: Number(f.stock.value || 1),
       specs: f.specs.value.trim() || null,
     };
+    /* Saving with a code is what teaches the marketplace this name. */
+    if (scannedCode) body.barcode = scannedCode;
     if (itemPhoto !== null) body.image = itemPhoto;
 
     var call = editing
@@ -1139,6 +1262,8 @@
              thirty things is listing thirty similar things. */
           editing = null;
           itemPhoto = null;
+          scannedCode = null;
+          text($("#scan-hint"), "");
           var g = $("#item-form").elements;
           g.name.value = "";
           g.price.value = "";
@@ -2259,6 +2384,16 @@
   $("#cat-add").addEventListener("click", function () {
     openItemSheet(null);
   });
+
+  $("#item-scan").addEventListener("click", function () {
+    if ($("#scanner").hidden) startScanning();
+    else stopScanning();
+  });
+
+  $("#scan-stop").addEventListener("click", stopScanning);
+
+  /* The camera must not keep running behind a closed sheet. */
+  $("#item-dialog").addEventListener("close", stopScanning);
 
   $("#item-photo-btn").addEventListener("click", function () {
     $("#item-photo").click();

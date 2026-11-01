@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS products (
     specs       TEXT,
     price       REAL NOT NULL,
     stock       INTEGER DEFAULT 1,
+    barcode     TEXT,
     image       BLOB,
     image_type  TEXT,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -135,6 +136,23 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- A conversation is a request paired with one shop. Two shops answering the
 -- same request are two separate threads, and the student is whoever owns the
 -- request, so the pair alone identifies both sides.
+-- Barcodes the marketplace has learned, shared by every shop.
+--
+-- The first shop to scan a code types the name once; everyone who scans it
+-- afterwards gets it filled in. A single shop's app could never do this --
+-- it only works because there are many shops behind one catalogue, and it
+-- gets faster the more of them there are.
+CREATE TABLE IF NOT EXISTS barcodes (
+    code       TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    category   TEXT,
+    specs      TEXT,
+    source     TEXT NOT NULL DEFAULT 'shop',   -- shop | openfoodfacts
+    seen       INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- A student's verdict on a shop. One per pair: a second opinion from the
 -- same student replaces the first rather than stacking, so a shop cannot be
 -- buried or inflated by one person posting repeatedly.
@@ -223,6 +241,11 @@ def init_db():
             if col not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (col, decl))
         pcols = [r["name"] for r in conn.execute("PRAGMA table_info(products)")]
+        if "barcode" not in pcols:
+            conn.execute("ALTER TABLE products ADD COLUMN barcode TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_products_barcode "
+                "ON products(barcode)")
         if "image" not in pcols:
             # The bytes themselves, not a path: the host's disk is wiped on
             # restart, so a file on it would outlive nothing. Kept out of the
@@ -519,6 +542,7 @@ class ProductEdit(BaseModel):
     price: Optional[float] = Field(default=None, ge=0)
     stock: Optional[int] = Field(default=None, ge=0)
     image: Optional[str] = Field(default=None, max_length=3_000_000)
+    barcode: Optional[str] = Field(default=None, max_length=32)
 
 
 class ReviewIn(BaseModel):
@@ -569,6 +593,7 @@ class ProductIn(BaseModel):
     # around a tenth of this, and anything larger is a client that skipped
     # the resize rather than a photograph that needed the room.
     image: Optional[str] = Field(default=None, max_length=3_000_000)
+    barcode: Optional[str] = Field(default=None, max_length=32)
 
 
 class OfferIn(BaseModel):
@@ -910,12 +935,14 @@ def add_product(data: ProductIn, conn: sqlite3.Connection = Depends(get_db),
     if data.category not in CATEGORIES:
         raise HTTPException(400, "Unknown category")
     blob, media = decode_data_url(data.image)
+    code = clean_barcode(data.barcode)
     cur = conn.execute(
         "INSERT INTO products (shop_id, name, category, description, specs, "
-        "price, stock, image, image_type) VALUES (?,?,?,?,?,?,?,?,?)",
+        "price, stock, barcode, image, image_type) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (user["id"], data.name.strip(), data.category, data.description,
-         data.specs, data.price, data.stock, blob, media),
+         data.specs, data.price, data.stock, code, blob, media),
     )
+    remember_barcode(conn, code, data.name, data.category, data.specs)
     conn.commit()
     return {"ok": True, "id": cur.lastrowid, "has_image": blob is not None}
 
@@ -1003,9 +1030,20 @@ def edit_product(product_id: int, data: ProductEdit,
             put("image", None)
             put("image_type", None)
 
+    if data.barcode is not None:
+        put("barcode", clean_barcode(data.barcode))
+
     if sets:
         params.append(product_id)
         conn.execute("UPDATE products SET " + ", ".join(sets) + " WHERE id = ?", params)
+        # A corrected name is the better name, so the shared table learns it.
+        fixed = conn.execute(
+            "SELECT barcode, name, category, specs FROM products WHERE id = ?",
+            (product_id,)
+        ).fetchone()
+        if fixed is not None:
+            remember_barcode(conn, fixed["barcode"], fixed["name"],
+                             fixed["category"], fixed["specs"])
         conn.commit()
 
     out = conn.execute(
@@ -1170,6 +1208,121 @@ def admin_add_shop(data: ShopIn, conn: sqlite3.Connection = Depends(get_db),
     )
     conn.commit()
     return {"ok": True, "id": cur.lastrowid}
+
+
+# ==========================================================================
+# Barcodes
+# ==========================================================================
+
+
+def clean_barcode(code: Optional[str]) -> Optional[str]:
+    """Digits only. Scanners and people both add spaces and dashes."""
+    if not code:
+        return None
+    digits = "".join(ch for ch in code if ch.isdigit())
+    # EAN-8 through to a long GTIN. Anything outside that is not a product
+    # barcode and should not become a row.
+    return digits if 8 <= len(digits) <= 14 else None
+
+
+def lookup_open_food_facts(code: str):
+    """
+    Ask Open Food Facts what a barcode is.
+
+    Only consulted when the marketplace has not seen the code before, and the
+    answer is written into our own table so it is asked at most once ever.
+    Failure is silent and expected: the service is for groceries, most of
+    what these shops sell is not, and a shopkeeper waiting on a scan should
+    never be held up by somebody else's server.
+    """
+    import json as _json
+    import urllib.request
+
+    url = "https://world.openfoodfacts.org/api/v0/product/%s.json" % code
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "HyperLocalStudentMarketplace/1.0"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+    if data.get("status") != 1:
+        return None
+    product = data.get("product") or {}
+    name = (product.get("product_name")
+            or product.get("generic_name")
+            or "").strip()
+    if not name:
+        return None
+    brand = (product.get("brands") or "").split(",")[0].strip()
+    quantity = (product.get("quantity") or "").strip()
+    if brand and brand.lower() not in name.lower():
+        name = "%s %s" % (brand, name)
+    return {"name": name[:200], "specs": quantity[:1000] or None}
+
+
+@app.get("/api/barcode/{code}", tags=["catalog"])
+def barcode_lookup(code: str, conn: sqlite3.Connection = Depends(get_db),
+                   user: dict = Depends(require_shop)):
+    """
+    What is this barcode?
+
+    Our own table first, because a name a real shopkeeper typed beats a
+    database entry, and because it costs nothing. Open Food Facts only if we
+    have never seen the code, and whatever it says is kept so the question is
+    asked once for the whole marketplace rather than once per shop.
+    """
+    clean = clean_barcode(code)
+    if not clean:
+        raise HTTPException(400, "That is not a product barcode")
+
+    row = conn.execute(
+        "SELECT code, name, category, specs, source, seen FROM barcodes WHERE code = ?",
+        (clean,)
+    ).fetchone()
+    if row is not None:
+        return {"found": True, **dict(row)}
+
+    found = lookup_open_food_facts(clean)
+    if found is None:
+        return {"found": False, "code": clean}
+
+    conn.execute(
+        "INSERT INTO barcodes (code, name, specs, source, seen) "
+        "VALUES (?,?,?,'openfoodfacts',0) "
+        "ON CONFLICT(code) DO NOTHING",
+        (clean, found["name"], found.get("specs")),
+    )
+    conn.commit()
+    return {
+        "found": True, "code": clean, "name": found["name"],
+        "category": None, "specs": found.get("specs"),
+        "source": "openfoodfacts", "seen": 0,
+    }
+
+
+def remember_barcode(conn: sqlite3.Connection, code: Optional[str],
+                     name: str, category: Optional[str],
+                     specs: Optional[str]) -> None:
+    """
+    Teach the marketplace what a shop just called this code.
+
+    A name typed by a shopkeeper who had the thing in their hand is better
+    than anything a database will say, so it replaces whatever was there.
+    """
+    clean = clean_barcode(code)
+    if not clean or not name:
+        return
+    conn.execute(
+        "INSERT INTO barcodes (code, name, category, specs, source, seen) "
+        "VALUES (?,?,?,?,'shop',1) "
+        "ON CONFLICT(code) DO UPDATE SET "
+        "  name = excluded.name, category = excluded.category, "
+        "  specs = excluded.specs, source = 'shop', "
+        "  seen = barcodes.seen + 1, updated_at = CURRENT_TIMESTAMP",
+        (clean, name.strip()[:200], category, (specs or "").strip()[:1000] or None),
+    )
 
 
 # ==========================================================================
