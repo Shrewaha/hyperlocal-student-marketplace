@@ -341,6 +341,16 @@
                     })
                     .join(", ");
                 }
+                /*
+                 * Tokens expire now, so a 401 on a call we sent credentials
+                 * with means the session has ended rather than that this one
+                 * action failed. Dropping the stale token here is what stops
+                 * the app sitting on a signed-in-looking screen where every
+                 * button fails one at a time.
+                 */
+                if (res.status === 401 && options.auth !== false && state.token) {
+                  sessionEnded(detail);
+                }
                 throw new Error(detail || "Request failed (" + res.status + ")");
               }
               return data;
@@ -785,6 +795,10 @@
 
   var registering = false;
 
+  /* Boot does its own navigating. Until it finishes, an expired token should
+     quietly become "signed out" rather than fight it for the screen. */
+  var booted = false;
+
   /* Open the account screen in a known mode, so a button elsewhere can send
      someone to "create an account" rather than to a sign-in form they have
      no credentials for. */
@@ -800,6 +814,9 @@
     text($("#auth-go"), registering ? "Create account" : "Sign in");
     text($("#auth-switch"), registering ? "I already have an account" : "Create an account");
     show($("#reg-only"), registering);
+    show($("#age-gate"), registering);
+    /* Nothing to recover when there is no account yet. */
+    show($("#auth-alt"), !registering);
     $("#auth-form").elements.password.autocomplete = registering
       ? "new-password"
       : "current-password";
@@ -840,6 +857,122 @@
         state.token = null;
         store(localStorage, TOKEN_KEY, null);
       });
+  }
+
+  /* Forget the signed-in account, everywhere the app keeps a trace of it.
+     Shared by signing out, by a session expiring under us, and by deleting
+     the account, so none of the three can leave a piece behind. */
+  function forgetSession() {
+    state.token = null;
+    state.user = null;
+    store(localStorage, TOKEN_KEY, null);
+    paintTabs();
+  }
+
+  /*
+   * The server has told us this token is no longer good.
+   *
+   * Guarded against repeating itself: a screen that fires four requests at
+   * once would otherwise show four identical toasts and bounce the person to
+   * the sign-in screen four times.
+   */
+  var sessionEndedOnce = false;
+
+  function sessionEnded(detail) {
+    if (sessionEndedOnce) return;
+    sessionEndedOnce = true;
+    setTimeout(function () {
+      sessionEndedOnce = false;
+    }, 3000);
+
+    var wasSignedIn = !!state.user;
+    forgetSession();
+    if (!booted) return; /* boot handles its own redirect */
+    toast(detail || "Your session has expired. Please sign in again.", "warn", 6000);
+    if (wasSignedIn) openAuth(false);
+  }
+
+  /* --------------------------------------------------------- password reset */
+
+  /*
+   * The reset link lands on the app as #reset=<token>. Reading it from the
+   * fragment rather than the query string keeps the token out of the
+   * Referer header the browser sends when the page loads something external,
+   * and out of most server access logs.
+   */
+  function pendingResetToken() {
+    var match = /[#&]reset=([^&]+)/.exec(location.hash || "");
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  function clearResetFromUrl() {
+    var kept = (location.hash || "").replace(/[#&]reset=[^&]*/, "");
+    history.replaceState(
+      null,
+      "",
+      location.pathname + location.search + (kept && kept !== "#" ? kept : "")
+    );
+  }
+
+  function openResetDialog(token) {
+    var dlg = $("#reset-dialog");
+    var form = $("#reset-form");
+    var msg = $("#reset-msg");
+    form.reset();
+    msg.className = "msg";
+    text(msg, "");
+    dlg.returnValue = "";
+    dlg.showModal();
+
+    dlg.addEventListener(
+      "close",
+      function () {
+        /* Whether it worked or they gave up, the token is spent as far as
+           this page is concerned: leaving it in the address means a reload
+           reopens this dialog with a link the server has already used. */
+        clearResetFromUrl();
+        if (dlg.returnValue !== "save") return;
+      },
+      { once: true }
+    );
+
+    form.addEventListener("submit", function onSubmit(e) {
+      /* The dialog form submits with method="dialog", which closes it. The
+         network call has to happen first, so this takes over the submit. */
+      if (!form.elements.password) return;
+      var chosen = form.elements.password.value;
+      var again = form.elements.confirm.value;
+      if (e.submitter && e.submitter.value === "cancel") return;
+
+      e.preventDefault();
+      if (chosen !== again) {
+        msg.className = "msg msg--bad";
+        text(msg, "Those two passwords are not the same.");
+        return;
+      }
+      msg.className = "msg";
+      text(msg, "Changing…");
+
+      request("/api/password/reset", {
+        method: "POST",
+        auth: false,
+        body: { token: token, password: chosen },
+      }).then(
+        function (data) {
+          form.removeEventListener("submit", onSubmit);
+          dlg.returnValue = "save";
+          dlg.close();
+          /* A reset signs every device out, this one included. */
+          forgetSession();
+          toast(data.message || "Password changed.", "ok", 6000);
+          openAuth(false);
+        },
+        function (err) {
+          msg.className = "msg msg--bad";
+          text(msg, err.message);
+        }
+      );
+    });
   }
 
   /* -------------------------------------------------------------- student */
@@ -2200,6 +2333,102 @@
     paintAuthMode();
   });
 
+  $("#auth-forgot").addEventListener("click", function () {
+    var dlg = $("#forgot-dialog");
+    var form = $("#forgot-form");
+    var msg = $("#forgot-msg");
+    form.reset();
+    msg.className = "msg";
+    text(msg, "");
+    /* Carry over whatever they already typed, so they are not asked for the
+       same address twice. */
+    var typed = $("#auth-form").elements.email.value.trim();
+    if (typed) form.elements.email.value = typed;
+    dlg.showModal();
+  });
+
+  $("#forgot-form").addEventListener("submit", function (e) {
+    if (e.submitter && e.submitter.value === "cancel") return;
+    e.preventDefault();
+
+    var form = e.target;
+    var msg = $("#forgot-msg");
+    msg.className = "msg";
+    text(msg, "Sending…");
+
+    request("/api/password/forgot", {
+      method: "POST",
+      auth: false,
+      body: { email: form.elements.email.value.trim() },
+    }).then(
+      function (data) {
+        $("#forgot-dialog").close();
+        /* Deliberately the same words whether or not that address exists --
+           the server will not say, and neither should the screen. */
+        toast(data.message || "Check your inbox.", "ok", 8000);
+      },
+      function (err) {
+        msg.className = "msg msg--bad";
+        text(msg, err.message);
+      }
+    );
+  });
+
+  $("#nav-out-all").addEventListener("click", function () {
+    var msg = $("#account-msg");
+    msg.className = "msg";
+    text(msg, "Signing out…");
+    request("/api/logout-everywhere", { method: "POST" }).then(
+      function (data) {
+        forgetSession();
+        toast(
+          "Signed out on " + (data.signed_out || 1) + " device(s).",
+          "ok",
+          6000
+        );
+        openAuth(false);
+      },
+      function (err) {
+        msg.className = "msg msg--bad";
+        text(msg, err.message);
+      }
+    );
+  });
+
+  $("#nav-delete").addEventListener("click", function () {
+    var dlg = $("#delete-dialog");
+    var form = $("#delete-form");
+    form.reset();
+    $("#delete-msg").className = "msg";
+    text($("#delete-msg"), "");
+    dlg.showModal();
+  });
+
+  $("#delete-form").addEventListener("submit", function (e) {
+    if (e.submitter && e.submitter.value !== "delete") return;
+    e.preventDefault();
+
+    var msg = $("#delete-msg");
+    msg.className = "msg";
+    text(msg, "Deleting…");
+
+    request("/api/me/delete", {
+      method: "POST",
+      body: { password: e.target.elements.password.value },
+    }).then(
+      function () {
+        $("#delete-dialog").close();
+        forgetSession();
+        toast("Your account and its data have been deleted.", "ok", 8000);
+        go("browse");
+      },
+      function (err) {
+        msg.className = "msg msg--bad";
+        text(msg, err.message);
+      }
+    );
+  });
+
   $("#auth-form").addEventListener("change", function (e) {
     if (e.target.name === "role") {
       paintRoleFields();
@@ -2241,6 +2470,15 @@
     }
 
     var role = f.role.value;
+    /* Checked here as well as on the server, so the answer is "tick the box"
+       rather than a refusal that arrives after a round trip. */
+    if (!f.is_adult.checked) {
+      msg.className = "msg msg--bad";
+      text(msg, "Please confirm you are 18 or over to create an account.");
+      f.is_adult.focus();
+      return;
+    }
+
     request("/api/register", {
       method: "POST",
       auth: false,
@@ -2252,6 +2490,7 @@
         area: f.area.value.trim() || null,
         shop_name: role === "shop" ? f.shop_name.value.trim() : null,
         phone: role === "shop" ? f.phone.value.trim() || null : null,
+        is_adult: true,
       },
     })
       .then(function () {
@@ -2642,12 +2881,15 @@
 
   /* ----------------------------------------------------------------- boot */
 
+  var resetToken = pendingResetToken();
+
   if (!apiBase()) {
     show($("#no-api"), true);
     paintLanguage();
     paintAuthMode();
     paintBrowseIntro();
     paintTabs();
+    booted = true;
     return;
   }
 
@@ -2657,6 +2899,14 @@
     .then(loadAreas)
     .then(restoreSession)
     .then(function () {
+      booted = true;
+      /* Arriving from a reset email beats whatever else the app would have
+         shown: they clicked that link to do one thing. */
+      if (resetToken) {
+        go("auth");
+        openResetDialog(resetToken);
+        return;
+      }
       go(state.user ? "home" : "browse");
       return refreshUnread(true).then(function () {
         return refreshAlerts(true);

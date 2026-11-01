@@ -18,13 +18,17 @@ so a slow or broken SMTP server can never delay or fail an API response.
 
 import os
 import json
+import time
 import base64
 import secrets
 import hashlib
 import sqlite3
+import threading
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
-from fastapi import FastAPI, Depends, Header, HTTPException, BackgroundTasks, Query
+from fastapi import (FastAPI, Depends, Header, HTTPException, BackgroundTasks,
+                     Query, Request)
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
@@ -52,6 +56,22 @@ ADMIN_EMAILS = {
     for e in os.getenv("ADMIN_EMAILS", "").split(",")
     if e.strip()
 }
+
+# How long a sign-in lasts without being used. The window slides: every
+# authenticated request pushes it out again, so somebody who opens the app
+# each week is never signed out, while a phone that stops being used goes
+# cold on its own.
+SESSION_TTL_DAYS = int(os.getenv("SESSION_TTL_DAYS", "30"))
+
+# How long a password-reset link stays valid. Short on purpose -- the link
+# is a way into the account, and it is read from an inbox minutes after it
+# is asked for, not days.
+RESET_TTL_MINUTES = int(os.getenv("RESET_TTL_MINUTES", "60"))
+
+# Where the browser client lives, used to build the link inside the reset
+# email. Without it the email carries the raw token and tells the reader
+# where to paste it, which still works but reads like a ransom note.
+APP_URL = os.getenv("APP_URL", "").rstrip("/")
 
 app = FastAPI(
     title="HyperLocal Student Marketplace",
@@ -127,9 +147,28 @@ CREATE TABLE IF NOT EXISTS offers (
     created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- A signed-in device. expires_at is what stops a token being a permanent
+-- key to the account: a phone that is sold, lost or lent stops working on
+-- its own, without the owner having to think of revoking anything.
 CREATE TABLE IF NOT EXISTS sessions (
     token      TEXT PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id),
+    expires_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- A pending "I forgot my password" link.
+--
+-- The token is stored as a SHA-256 digest, never in the clear. A reset link
+-- is a bearer credential for the whole account, so a leaked database should
+-- not hand over a working one -- the same reasoning that keeps passwords
+-- hashed. used_at makes the link single-use: clicking an old link from an
+-- inbox after the password has already been changed does nothing.
+CREATE TABLE IF NOT EXISTS password_resets (
+    token_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    expires_at DATETIME NOT NULL,
+    used_at    DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -207,6 +246,8 @@ CREATE INDEX IF NOT EXISTS idx_products_shop   ON products(shop_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(request_id, shop_id, id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_reviews_shop ON reviews(shop_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_resets_user ON password_resets(user_id);
 """
 
 
@@ -237,9 +278,24 @@ def init_db():
             conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
         for col, decl in (("address", "TEXT"), ("lat", "REAL"), ("lng", "REAL"),
                           ("about", "TEXT"), ("avatar", "BLOB"),
-                          ("avatar_type", "TEXT"), ("blocked_at", "DATETIME")):
+                          ("avatar_type", "TEXT"), ("blocked_at", "DATETIME"),
+                          # When the account holder confirmed they are 18 or
+                          # over. The DPDP Act treats under-18s as children and
+                          # wants verifiable parental consent, which a campus
+                          # marketplace cannot collect -- so the app asks, and
+                          # keeps the answer.
+                          ("adult_confirmed_at", "DATETIME")):
             if col not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (col, decl))
+        # Sessions predate expiry: an existing database has tokens with no
+        # expires_at. They are given one from now rather than being deleted,
+        # so upgrading does not sign everybody out.
+        scols = [r["name"] for r in conn.execute("PRAGMA table_info(sessions)")]
+        if "expires_at" not in scols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN expires_at DATETIME")
+            conn.execute(
+                "UPDATE sessions SET expires_at = datetime('now', ?) "
+                "WHERE expires_at IS NULL", ("+%d days" % SESSION_TTL_DAYS,))
         pcols = [r["name"] for r in conn.execute("PRAGMA table_info(products)")]
         if "barcode" not in pcols:
             conn.execute("ALTER TABLE products ADD COLUMN barcode TEXT")
@@ -273,6 +329,34 @@ init_db()
 PBKDF2_ITERATIONS = 240_000
 
 
+# SQLite's CURRENT_TIMESTAMP writes UTC as "YYYY-MM-DD HH:MM:SS" with no zone
+# marker. These three keep every comparison in that same shape, so an expiry
+# written by SQL and one written by Python are the same kind of thing.
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def stamp(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def parse_stamp(value) -> datetime:
+    """Read a SQLite timestamp back. Unreadable means expired, not crashed."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value or "").strip().replace("T", " ")
+    for shape in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text[:26], shape).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    # A row whose expiry cannot be read is treated as long gone. The other
+    # way round -- unreadable means valid forever -- is the bug this whole
+    # change exists to remove.
+    return datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac(
@@ -299,6 +383,77 @@ def new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def hash_token(token: str) -> str:
+    """Digest a reset token for storage.
+
+    No salt and no iterations, unlike a password: this is 32 bytes of
+    cryptographic randomness, not something a person chose, so there is
+    nothing to guess and nothing a rainbow table could hold. The digest
+    exists so that a copy of the database is not a pile of working reset
+    links.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+# ==========================================================================
+# Rate limiting
+# ==========================================================================
+#
+# Without this, /api/login answers as fast as the network allows and a weak
+# password falls in minutes. The counters live in memory rather than in the
+# database: one uvicorn worker serves this app, and a login attempt should
+# not cost a disk write. A restart clears them, which matters less than it
+# sounds -- an online guessing run takes hours and deploys do not.
+#
+# Move this to Redis or a table the day the service runs more than one
+# worker, because until then each worker would count separately.
+
+_rate_lock = threading.Lock()
+_rate_hits: dict = {}
+
+
+def rate_limit(bucket: str, limit: int, window_seconds: int) -> None:
+    """Allow `limit` hits per `window_seconds` for `bucket`, else 429.
+
+    A sliding window kept as a list of timestamps. The lists are tiny -- at
+    most `limit` entries -- and buckets that go quiet are dropped on the
+    next sweep, so this cannot grow without bound.
+    """
+    now = time.monotonic()
+    cutoff = now - window_seconds
+    with _rate_lock:
+        hits = [t for t in _rate_hits.get(bucket, ()) if t > cutoff]
+        # Occasional sweep so abandoned buckets (one failed login from an IP
+        # never seen again) do not accumulate for the life of the process.
+        if len(_rate_hits) > 2048:
+            for key in [k for k, v in _rate_hits.items() if not v or max(v) < cutoff]:
+                _rate_hits.pop(key, None)
+        if len(hits) >= limit:
+            retry = int(window_seconds - (now - min(hits))) + 1
+            _rate_hits[bucket] = hits
+            raise HTTPException(
+                429, "Too many attempts. Try again in %d seconds." % retry,
+                headers={"Retry-After": str(retry)},
+            )
+        hits.append(now)
+        _rate_hits[bucket] = hits
+
+
+def client_ip(request: Request) -> str:
+    """The caller's address, as far as it can be trusted.
+
+    Render terminates TLS at a proxy, so request.client.host is the proxy
+    for every caller and rate limiting on it would throttle the whole
+    marketplace at once. The left-most entry of X-Forwarded-For is the
+    original client. A caller can forge that header, so this is a civility
+    measure against brute force, not an access control.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:64]
+    return (request.client.host if request.client else "unknown")[:64]
+
+
 # ==========================================================================
 # Auth dependencies
 # ==========================================================================
@@ -309,18 +464,89 @@ def get_current_user(authorization: Optional[str] = Header(None),
         raise HTTPException(401, "Missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
     row = conn.execute(
-        "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id "
+        "SELECT u.*, s.expires_at AS session_expires_at "
+        "FROM sessions s JOIN users u ON u.id = s.user_id "
         "WHERE s.token = ?", (token,)
     ).fetchone()
     if row is None:
         raise HTTPException(401, "Invalid or expired token")
+
+    # An expired token is deleted rather than merely refused, so a stale row
+    # does not sit in the table forever waiting to be swept.
+    expires_at = row["session_expires_at"]
+    if expires_at is not None and parse_stamp(expires_at) <= utcnow():
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        conn.commit()
+        raise HTTPException(401, "Your session has expired. Please sign in again.")
+
+    # Slide the window forward. Written only when it would move by more than
+    # an hour: otherwise every authenticated request costs a disk write, and
+    # on SQLite that is a write lock taken on the whole database.
+    if expires_at is not None:
+        fresh = utcnow() + timedelta(days=SESSION_TTL_DAYS)
+        if fresh - parse_stamp(expires_at) > timedelta(hours=1):
+            conn.execute("UPDATE sessions SET expires_at = ? WHERE token = ?",
+                         (stamp(fresh), token))
+            conn.commit()
+
     user = dict(row)
+    user.pop("session_expires_at", None)
     # Checked on every request, not only at sign-in. Blocking somebody who is
     # already signed in has to take effect now; otherwise their existing
     # token keeps working until they happen to sign out.
     if user.get("blocked_at") is not None:
         raise HTTPException(403, "This account has been suspended")
     return user
+
+
+def reset_link(token: str) -> str:
+    """The URL that lands on the reset form, when one can be built."""
+    if not APP_URL:
+        return ""
+    return "%s/#reset=%s" % (APP_URL, token)
+
+
+def purge_user(conn: sqlite3.Connection, user_id: int) -> None:
+    """
+    Remove an account and everything that belonged to it.
+
+    Deleted in dependency order, because the schema has foreign keys on and
+    SQLite will refuse a parent whose children are still there. Offers and
+    requests go too: an offer by a shop that no longer exists would leave a
+    comparison table quoting a price nobody stands behind.
+
+    One function so that a person deleting their own account and an owner
+    removing somebody both clear the same tables. Two copies of this list
+    would drift, and the half that got forgotten would be the half holding
+    personal data.
+
+    Does not commit -- the caller decides what else belongs in the same
+    transaction.
+    """
+    conn.execute("DELETE FROM reviews WHERE shop_id = ? OR student_id = ?",
+                 (user_id, user_id))
+    conn.execute("DELETE FROM messages WHERE sender_id = ? OR shop_id = ?",
+                 (user_id, user_id))
+    conn.execute("DELETE FROM thread_reads WHERE user_id = ? OR shop_id = ?",
+                 (user_id, user_id))
+    conn.execute("DELETE FROM notifications WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM offers WHERE shop_id = ?", (user_id,))
+    conn.execute("DELETE FROM products WHERE shop_id = ?", (user_id,))
+    # A student's requests take their offers with them.
+    conn.execute(
+        "DELETE FROM offers WHERE request_id IN "
+        "(SELECT id FROM requests WHERE student_id = ?)", (user_id,))
+    conn.execute("DELETE FROM requests WHERE student_id = ?", (user_id,))
+    conn.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    # The email log holds an address and what was sent to it, so it is
+    # personal data and goes with the account. Wrapped because the table
+    # belongs to emailer and an older database may not have it yet.
+    try:
+        conn.execute("DELETE FROM email_log WHERE user_id = ?", (user_id,))
+    except sqlite3.OperationalError:
+        pass
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
 
 def is_admin(user: dict) -> bool:
@@ -504,6 +730,23 @@ class RegisterIn(BaseModel):
     # Shops only. It is shown to a student on that shop's offers, which is
     # how the two actually reach each other once a price is agreed.
     phone: Optional[str] = Field(default=None, max_length=32)
+    # Defaults to False so that an old client, or a request that simply
+    # leaves the field out, is refused rather than quietly treated as a
+    # confirmation nobody gave.
+    is_adult: bool = False
+
+
+class ForgotIn(BaseModel):
+    email: EmailStr
+
+
+class ResetIn(BaseModel):
+    token: str = Field(min_length=16, max_length=200)
+    password: str = Field(min_length=6, max_length=200)
+
+
+class DeleteMeIn(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
 
 
 class ProfileIn(BaseModel):
@@ -613,24 +856,33 @@ class NotifyIn(BaseModel):
 # ==========================================================================
 
 @app.post("/api/register", tags=["auth"])
-def register(data: RegisterIn, background: BackgroundTasks,
+def register(data: RegisterIn, background: BackgroundTasks, request: Request,
              conn: sqlite3.Connection = Depends(get_db)):
+    # Signups are cheap to make and expensive to clean up: twenty accounts
+    # an hour from one address is a script, not a hostel.
+    rate_limit("register:%s" % client_ip(request), limit=20, window_seconds=3600)
+
     if data.role not in ROLES:
         raise HTTPException(400, "role must be 'student' or 'shop'")
     if data.role == "shop" and not (data.shop_name or "").strip():
         raise HTTPException(400, "shop_name is required for shop accounts")
+    if not data.is_adult:
+        raise HTTPException(
+            400,
+            "You must confirm you are 18 or over to use this marketplace.")
 
     email = data.email.lower().strip()
     if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
         raise HTTPException(409, "An account with that email already exists")
 
     cur = conn.execute(
-        "INSERT INTO users (name, email, password, role, area, shop_name, phone) "
-        "VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO users (name, email, password, role, area, shop_name, "
+        "phone, adult_confirmed_at) VALUES (?,?,?,?,?,?,?,?)",
         (data.name.strip(), email, hash_password(data.password), data.role,
          normalize_area(data.area),
          (data.shop_name or "").strip() or None,
-         normalize_phone(data.phone) if data.role == "shop" else None),
+         normalize_phone(data.phone) if data.role == "shop" else None,
+         stamp(utcnow())),
     )
     user_id = cur.lastrowid
     conn.commit()                       # commit BEFORE queueing the email
@@ -640,9 +892,17 @@ def register(data: RegisterIn, background: BackgroundTasks,
 
 
 @app.post("/api/login", tags=["auth"])
-def login(data: LoginIn, conn: sqlite3.Connection = Depends(get_db)):
-    row = conn.execute("SELECT * FROM users WHERE email = ?",
-                       (data.email.lower().strip(),)).fetchone()
+def login(data: LoginIn, request: Request,
+          conn: sqlite3.Connection = Depends(get_db)):
+    email = data.email.lower().strip()
+    # Two buckets, because one alone has a hole in it. Per-IP stops one
+    # machine working through a password list; per-account stops a spread-out
+    # attack from many addresses against one known email. Both are generous
+    # enough that somebody mistyping their own password never meets them.
+    rate_limit("login-ip:%s" % client_ip(request), limit=10, window_seconds=300)
+    rate_limit("login-acct:%s" % email, limit=10, window_seconds=900)
+
+    row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     # Same message either way, so the response cannot be used to discover
     # which email addresses are registered.
     if row is None or not verify_password(data.password, row["password"]):
@@ -651,10 +911,18 @@ def login(data: LoginIn, conn: sqlite3.Connection = Depends(get_db)):
         raise HTTPException(403, "This account has been suspended")
 
     token = new_token()
-    conn.execute("INSERT INTO sessions (token, user_id) VALUES (?,?)",
-                 (token, row["id"]))
+    conn.execute(
+        "INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,?)",
+        (token, row["id"], stamp(utcnow() + timedelta(days=SESSION_TTL_DAYS))))
+    # Housekeeping on the way past: a sign-in is a natural moment to drop
+    # this account's dead tokens, and it keeps the table from growing by one
+    # row per sign-in forever.
+    conn.execute(
+        "DELETE FROM sessions WHERE user_id = ? AND expires_at IS NOT NULL "
+        "AND expires_at <= ?", (row["id"], stamp(utcnow())))
     conn.commit()
-    return {"ok": True, "token": token, "user": public_user(dict(row))}
+    return {"ok": True, "token": token, "user": public_user(dict(row)),
+            "expires_in_days": SESSION_TTL_DAYS}
 
 
 @app.post("/api/logout", tags=["auth"])
@@ -667,9 +935,135 @@ def logout(authorization: Optional[str] = Header(None),
     return {"ok": True}
 
 
+@app.post("/api/logout-everywhere", tags=["auth"])
+def logout_everywhere(conn: sqlite3.Connection = Depends(get_db),
+                      user: dict = Depends(get_current_user)):
+    """
+    Drop every session for this account, this device included.
+
+    The answer to "my phone is gone". Expiry alone would get there in a
+    month; this gets there now, and it is the only revocation an ordinary
+    user can perform without an administrator.
+    """
+    cur = conn.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+    conn.commit()
+    return {"ok": True, "signed_out": cur.rowcount}
+
+
+@app.post("/api/password/forgot", tags=["auth"])
+def forgot_password(data: ForgotIn, background: BackgroundTasks,
+                    request: Request,
+                    conn: sqlite3.Connection = Depends(get_db)):
+    """
+    Start a password reset.
+
+    Always answers the same way, whether or not the address is registered.
+    An endpoint that says "no such account" is a tool for working out who
+    has an account here, and on a campus that is a list of real people.
+    """
+    email = data.email.lower().strip()
+    rate_limit("forgot-ip:%s" % client_ip(request), limit=5, window_seconds=900)
+    rate_limit("forgot-acct:%s" % email, limit=5, window_seconds=3600)
+
+    answer = {"ok": True,
+              "message": "If that address has an account, a reset link is on "
+                         "its way. Check your inbox and your spam folder."}
+
+    row = conn.execute(
+        "SELECT id, blocked_at FROM users WHERE email = ?", (email,)).fetchone()
+    if row is None or row["blocked_at"] is not None:
+        return answer
+
+    # Any link already outstanding stops working now. Asking twice should
+    # leave one live link, not two.
+    conn.execute(
+        "DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL",
+        (row["id"],))
+    token = new_token()
+    conn.execute(
+        "INSERT INTO password_resets (token_hash, user_id, expires_at) "
+        "VALUES (?,?,?)",
+        (hash_token(token), row["id"],
+         stamp(utcnow() + timedelta(minutes=RESET_TTL_MINUTES))))
+    conn.commit()                       # commit BEFORE queueing the email
+
+    background.add_task(emailer.send_password_reset, row["id"], token,
+                        reset_link(token), RESET_TTL_MINUTES)
+    return answer
+
+
+@app.post("/api/password/reset", tags=["auth"])
+def reset_password(data: ResetIn, request: Request,
+                   conn: sqlite3.Connection = Depends(get_db)):
+    """Finish a password reset and sign every device out."""
+    rate_limit("reset-ip:%s" % client_ip(request), limit=10, window_seconds=900)
+
+    row = conn.execute(
+        "SELECT r.token_hash, r.user_id, r.expires_at, r.used_at, u.blocked_at "
+        "FROM password_resets r JOIN users u ON u.id = r.user_id "
+        "WHERE r.token_hash = ?", (hash_token(data.token.strip()),),
+    ).fetchone()
+
+    # One message for every failure: wrong token, used token, expired token.
+    # Telling them apart would let somebody test tokens for validity.
+    if (row is None or row["used_at"] is not None
+            or parse_stamp(row["expires_at"]) <= utcnow()):
+        raise HTTPException(
+            400, "That reset link is invalid or has expired. Ask for a new one.")
+    if row["blocked_at"] is not None:
+        raise HTTPException(403, "This account has been suspended")
+
+    conn.execute("UPDATE users SET password = ? WHERE id = ?",
+                 (hash_password(data.password), row["user_id"]))
+    conn.execute("UPDATE password_resets SET used_at = ? WHERE token_hash = ?",
+                 (stamp(utcnow()), row["token_hash"]))
+    # Whoever knew the old password is signed out. If the reset happened
+    # because the account was taken over, leaving their session alive would
+    # make the whole exercise pointless.
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["user_id"],))
+    conn.commit()
+    return {"ok": True,
+            "message": "Password changed. Sign in with your new password."}
+
+
 @app.get("/api/me", tags=["auth"])
 def me(user: dict = Depends(get_current_user)):
     return public_user(user)
+
+
+@app.post("/api/me/delete", tags=["auth"])
+def delete_me(data: DeleteMeIn, conn: sqlite3.Connection = Depends(get_db),
+              user: dict = Depends(get_current_user)):
+    """
+    Delete this account and the personal data attached to it.
+
+    A POST rather than DELETE, which would read better, because a body on a
+    DELETE is the kind of thing an intermediary quietly drops -- and the
+    body is the password confirmation. Losing it would turn a confirmed
+    deletion into a 422, or worse, into an unconfirmed one.
+
+    Withdrawing consent has to actually remove something, or the consent
+    was never real. The password is asked for again because a borrowed
+    unlocked phone should not be able to erase somebody's shop.
+
+    An owner account is refused here for the same reason it is refused in
+    the admin tools: deleting the last administrator locks everyone out of
+    the controls, and that is a support problem with no way back.
+    """
+    if not verify_password(data.password, user["password"]):
+        # 403, not 401. The caller IS authenticated -- their token is fine,
+        # they mistyped the confirmation. A 401 here would be indistinguishable
+        # from an expired session, and a client that signs you out on 401
+        # would throw away a perfectly good session over a typo.
+        raise HTTPException(403, "That password is not correct")
+    if is_admin(user):
+        raise HTTPException(
+            400, "An owner account cannot be deleted from the app. Remove the "
+                 "address from ADMIN_EMAILS first.")
+
+    purge_user(conn, user["id"])
+    conn.commit()
+    return {"ok": True, "deleted": True}
 
 
 @app.patch("/api/me", tags=["auth"])
@@ -1150,14 +1544,7 @@ def admin_unblock(user_id: int, conn: sqlite3.Connection = Depends(get_db),
 @app.delete("/api/admin/users/{user_id}", tags=["admin"])
 def admin_delete(user_id: int, conn: sqlite3.Connection = Depends(get_db),
                  owner: dict = Depends(require_admin)):
-    """
-    Remove an account and everything that belonged to it.
-
-    Deleted in dependency order, because the schema has foreign keys on and
-    SQLite will refuse a parent whose children are still there. Offers and
-    requests go too: an offer by a shop that no longer exists would leave a
-    comparison table quoting a price nobody stands behind.
-    """
+    """Remove an account and everything that belonged to it."""
     row = conn.execute("SELECT id, email FROM users WHERE id = ?",
                        (user_id,)).fetchone()
     if row is None:
@@ -1165,22 +1552,7 @@ def admin_delete(user_id: int, conn: sqlite3.Connection = Depends(get_db),
     if (row["email"] or "").lower() in ADMIN_EMAILS:
         raise HTTPException(400, "An owner account cannot be deleted here")
 
-    conn.execute("DELETE FROM reviews WHERE shop_id = ? OR student_id = ?",
-                 (user_id, user_id))
-    conn.execute("DELETE FROM messages WHERE sender_id = ? OR shop_id = ?",
-                 (user_id, user_id))
-    conn.execute("DELETE FROM thread_reads WHERE user_id = ? OR shop_id = ?",
-                 (user_id, user_id))
-    conn.execute("DELETE FROM notifications WHERE user_id = ?", (user_id,))
-    conn.execute("DELETE FROM offers WHERE shop_id = ?", (user_id,))
-    conn.execute("DELETE FROM products WHERE shop_id = ?", (user_id,))
-    # A student's requests take their offers with them.
-    conn.execute(
-        "DELETE FROM offers WHERE request_id IN "
-        "(SELECT id FROM requests WHERE student_id = ?)", (user_id,))
-    conn.execute("DELETE FROM requests WHERE student_id = ?", (user_id,))
-    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    purge_user(conn, user_id)
     conn.commit()
     return {"ok": True, "id": user_id}
 

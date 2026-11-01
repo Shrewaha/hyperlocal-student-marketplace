@@ -142,8 +142,24 @@ Check it works:
 
 ```bash
 python test_emailer.py        # 14 checks, no SMTP account needed
+python test_auth.py           # sign-in, sessions, reset, deletion
+python test_upgrade.py        # an older database still upgrades cleanly
 curl http://localhost:8000/api/health
 ```
+
+#### Settings that matter in production
+
+Set these in the Render dashboard rather than committing them. The app runs
+without them, but two of the defaults are not what you want once real people
+have accounts.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `ADMIN_EMAILS` | empty | Comma-separated addresses that may block, unblock and remove accounts. There is no API that grants this, so there is no "make me an admin" endpoint to find. |
+| `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty | Until `SMTP_USER` is set, mail prints to the service log instead of being sent. For Gmail the password is a 16-character App Password, not the account password. |
+| `APP_URL` | empty | Where the browser client lives. Used to build the link inside a password-reset email; without it the email carries a code to paste instead. |
+| `SESSION_TTL_DAYS` | `30` | How long a sign-in survives without being used. The window slides on every request. |
+| `RESET_TTL_MINUTES` | `60` | How long a password-reset link stays valid. |
 
 ### 2. Frontend
 

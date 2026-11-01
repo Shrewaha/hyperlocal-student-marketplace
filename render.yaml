@@ -30,15 +30,45 @@ services:
     startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
-      # Print emails to the service log instead of sending them. Flip this to
-      # false and fill in the SMTP values in the Render dashboard once you have
-      # an App Password you are willing to put there.
+      # Mail is live. Until SMTP_USER is filled in from the dashboard the
+      # emailer still prints to the service log rather than failing every
+      # send against an unauthenticated server -- so this flag being false
+      # is safe before the credentials exist, and starts working the moment
+      # they do.
       - key: EMAIL_CONSOLE_ONLY
-        value: "true"
+        value: "false"
       - key: EMAIL_ENABLED
         value: "true"
       - key: APP_NAME
         value: HyperLocal Student Marketplace
+      # Where the browser client lives. Used to build the link inside a
+      # password-reset email; without it the email carries a code to paste
+      # instead, which works but reads badly.
+      - key: APP_URL
+        value: https://shrewaha.github.io/hyperlocal-student-marketplace
+      # SMTP credentials. sync:false keeps them out of the repository -- set
+      # each one in the Render dashboard. For Gmail, SMTP_USER is the full
+      # address and SMTP_PASSWORD is a 16-character App Password, not the
+      # account password.
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_STARTTLS
+        value: "true"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      # How long a sign-in survives without being used. The window slides on
+      # every request, so an active user is never signed out.
+      - key: SESSION_TTL_DAYS
+        value: "30"
+      # How long a password-reset link stays valid, in minutes.
+      - key: RESET_TTL_MINUTES
+        value: "60"
       # Comma-separated addresses that may manage accounts. Left blank on
       # purpose: fill it in from the dashboard, so an owner list is never
       # committed to a public repository.

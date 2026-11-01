@@ -6,6 +6,46 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Password reset.** "Forgot your password?" on the sign-in form sends a
+  link that works once and expires in an hour. Until now a shopkeeper who
+  forgot his password lost his shop, his catalogue and his reviews for good,
+  and there was nothing anyone could do about it.
+- **Sessions expire.** A sign-in now lasts 30 days of disuse rather than
+  forever, and the window slides on every request, so somebody who opens the
+  app each week is never signed out. A sold, lost or lent phone goes cold on
+  its own.
+- **Sign out everywhere**, on the account screen, for when waiting 30 days is
+  not good enough.
+- **Delete my account**, confirmed with the password. Removes the account,
+  its listings, offers, messages, reviews and mail log. Withdrawing consent
+  has to actually remove something, which the DPDP Act will require from
+  13 May 2027.
+- **An 18-or-over confirmation at signup.** The DPDP Act treats under-18s as
+  children and wants verifiable parental consent, which a campus marketplace
+  cannot collect. First-year students are often 17, so the question is asked
+  rather than assumed.
+- **Rate limiting on the auth endpoints**, per address and per account. A
+  login endpoint that answers as fast as the network allows gives up a weak
+  password in minutes.
+- `test_auth.py` and `test_upgrade.py`, both run by CI.
+
+### Changed
+
+- Email is live: `EMAIL_CONSOLE_ONLY` now defaults to `false` in
+  `render.yaml`. Until `SMTP_USER` is filled in, mail still prints to the
+  service log rather than failing against an unauthenticated server, so a
+  half-configured deploy does not silently lose password resets.
+- Account deletion by an owner and by the account holder now run the same
+  cleanup, so the two lists of tables cannot drift apart.
+
+### Fixed
+
+- A 401 on an authenticated request is now treated as "your session ended"
+  by the browser client, which clears the stale token instead of leaving a
+  signed-in-looking screen where every button fails one at a time.
+
 ## [1.9.0] - 2026-11-01
 
 ### Added

@@ -101,10 +101,28 @@ class MailConfig:
         self.app_name = os.getenv("APP_NAME", "HyperLocal Student Marketplace")
         self.app_url = os.getenv("APP_URL", "")
 
+    def wants_real_send(self):
+        """True when a message should actually be handed to an SMTP server.
+
+        EMAIL_CONSOLE_ONLY is the explicit switch, but there is a second,
+        quieter case: the switch is off and no credentials have been filled
+        in yet. Attempting a real send then means every mail fails against
+        smtp.gmail.com with no password, so a half-configured deploy loses
+        welcome mail and -- worse -- password resets.
+
+        Falling back to the console keeps those visible in the service log
+        instead, and the log line below says plainly which state we are in.
+        """
+        if self.console_only:
+            return False
+        if not self.user and not _env_bool("SMTP_ALLOW_ANONYMOUS", False):
+            return False
+        return True
+
     def is_usable(self):
         if not self.enabled:
             return False, "EMAIL_ENABLED is off"
-        if self.console_only:
+        if not self.wants_real_send():
             return True, ""
         if not self.host:
             return False, "SMTP_HOST not set"
@@ -300,15 +318,18 @@ def send_email(to_email, subject, html_body, text_body,
         _say("[email] skipped '%s' to %s (%s)" % (kind, to_email, reason))
         return False
 
-    if cfg.console_only:
+    if not cfg.wants_real_send():
+        why = ("EMAIL_CONSOLE_ONLY is on" if cfg.console_only
+               else "SMTP_USER is not set, so nothing can be sent yet")
         _say("\n" + "=" * 64)
         _say("[email:console] to      : %s" % to_email)
         _say("[email:console] subject : %s" % subject)
         _say("[email:console] kind    : %s  ref=%s" % (kind, ref))
+        _say("[email:console] why     : %s" % why)
         _say("-" * 64)
         _say(text_body)
         _say("=" * 64 + "\n")
-        _log(to_email, subject, kind, "console", ref, user_id)
+        _log(to_email, subject, kind, "console", ref, user_id, why)
         return True
 
     msg = EmailMessage()
@@ -598,6 +619,78 @@ def notify_new_request(request_id):
             ref="request:%s" % req["id"],
             user_id=shop["id"],
         )
+
+
+def send_password_reset(user_id, token, link, ttl_minutes=60):
+    """Email a password reset link.
+
+    Three things this deliberately does differently from every other mail
+    in here:
+
+    * dedupe is off. The dedupe key is kind+ref+recipient, and a second
+      reset request is a legitimate repeat -- the first mail went to spam,
+      or the link expired. Deduping would silently swallow it.
+    * notify_email is ignored. Somebody who turned off offer alerts has
+      not opted out of being able to get back into their own account.
+    * ref carries no token. The email_log is readable from the owner
+      dashboard, and a reset token sitting in a log is a working key.
+    """
+    cfg = get_config()
+    with _conn() as conn:
+        user = conn.execute(
+            "SELECT id, name, email FROM users WHERE id=?", (user_id,)
+        ).fetchone()
+    if user is None:
+        return False
+
+    # Without APP_URL there is no page to link to, so the mail carries the
+    # token itself and says what to do with it. Worse to read, still works.
+    if link:
+        action_html = (
+            "<p style='margin:20px 0;'>"
+            "<a href='%s' style='background:#111827;color:#ffffff;"
+            "padding:12px 20px;border-radius:8px;text-decoration:none;"
+            "display:inline-block;font-weight:600;'>Choose a new password</a>"
+            "</p>"
+            "<p style='color:#6B7280;font-size:13px;word-break:break-all;'>"
+            "If the button does not work, paste this into your browser:<br>%s</p>"
+        ) % (_esc(link), _esc(link))
+        action_text = "Open this link to choose a new password:\n%s\n" % link
+    else:
+        action_html = (
+            "<p>Open the app, choose <strong>Forgot password</strong>, and "
+            "enter this code:</p>"
+            "<p style='font-family:monospace;font-size:15px;background:#F3F4F6;"
+            "padding:12px;border-radius:8px;word-break:break-all;'>%s</p>"
+        ) % _esc(token)
+        action_text = ("Open the app, choose 'Forgot password', and enter "
+                       "this code:\n\n%s\n") % token
+
+    body = (
+        "<p>Hello %s,</p>"
+        "<p>Somebody asked to reset the password for this account. The link "
+        "below works once and expires in %d minutes.</p>"
+        "%s"
+        "<p style='color:#6B7280;font-size:13px;'>If this was not you, you "
+        "can ignore this email -- your password has not changed, and nobody "
+        "can read it from this message.</p>"
+    ) % (_esc(user["name"]), int(ttl_minutes), action_html)
+
+    text = (
+        "Hello %s,\n\n"
+        "Somebody asked to reset the password for this account. This works "
+        "once and expires in %d minutes.\n\n"
+        "%s\n"
+        "If this was not you, ignore this email. Your password has not "
+        "changed.\n"
+    ) % (user["name"], int(ttl_minutes), action_text)
+
+    return send_email(
+        user["email"],
+        "Reset your %s password" % cfg.app_name,
+        _layout("Password reset", body, cfg.app_name), text,
+        kind="password_reset", ref=None, user_id=user["id"], dedupe=False,
+    )
 
 
 def send_test(user_id):
