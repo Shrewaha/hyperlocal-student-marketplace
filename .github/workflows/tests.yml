@@ -34,6 +34,14 @@ jobs:
         working-directory: backend
         run: python test_emailer.py
 
+      - name: Run the auth tests
+        working-directory: backend
+        run: python test_auth.py
+
+      - name: Check an existing database still upgrades
+        working-directory: backend
+        run: python test_upgrade.py
+
       - name: Start the API and check it answers
         working-directory: backend
         env:

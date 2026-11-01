@@ -217,6 +217,7 @@
                   />
                 </label>
               </div>
+
             </div>
 
             <label class="field">
@@ -234,8 +235,27 @@
               />
             </label>
 
+            <!--
+              The DPDP Act treats anyone under 18 as a child and wants
+              verifiable parental consent, which a campus marketplace has no
+              way to collect. First-year students are often 17, so the
+              question has to be asked rather than assumed.
+
+              Last thing before the button, not buried among the fields: it is
+              a declaration about the person, not another detail about them.
+            -->
+            <label class="check" id="age-gate" hidden>
+              <input type="checkbox" name="is_adult" />
+              <span>I am 18 years old or over</span>
+            </label>
+
             <button class="btn btn--primary btn--block" type="submit" id="auth-go">Sign in</button>
             <p class="msg" id="auth-msg"></p>
+            <p class="auth-alt" id="auth-alt">
+              <button class="linkish" type="button" id="auth-forgot">
+                Forgot your password?
+              </button>
+            </p>
           </form>
 
           <p style="margin: 0.9rem 0 0; text-align: center">
@@ -564,6 +584,19 @@
             <button class="btn" id="nav-out">Sign out</button>
           </div>
         </div>
+
+        <div class="section__head"><h2>Your account</h2></div>
+        <div class="card">
+          <p class="hint-line">
+            Signing out everywhere ends every signed-in device, including this
+            one. Use it if you have lost a phone or lent one out.
+          </p>
+          <div class="actions">
+            <button class="btn" id="nav-out-all">Sign out everywhere</button>
+            <button class="btn btn--danger" id="nav-delete">Delete my account</button>
+          </div>
+          <p class="msg" id="account-msg"></p>
+        </div>
         <footer>
           Built by Shreyansh Kushwaha &mdash;
           <a href="https://github.com/Shrewaha/hyperlocal-student-marketplace">source</a>
@@ -765,6 +798,87 @@
           <button class="btn btn--ghost btn--sm" value="clear" formnovalidate>
             Use the default
           </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="forgot-dialog">
+      <form method="dialog" class="sheet" id="forgot-form">
+        <h2>Reset your password</h2>
+        <p>
+          Enter the email address on your account. If it is registered, we will
+          send a link that works once and expires in an hour.
+        </p>
+        <label class="field">
+          <span>Email</span>
+          <input name="email" type="email" required autocomplete="email" />
+        </label>
+        <p class="msg" id="forgot-msg"></p>
+        <div class="actions">
+          <button class="btn btn--primary" value="send">Send the link</button>
+          <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!--
+      Opened when the page is loaded with #reset=<token> in the address, which
+      is what the link in the email points at. The token never goes into a
+      form field the person has to copy.
+    -->
+    <dialog id="reset-dialog">
+      <form method="dialog" class="sheet" id="reset-form">
+        <h2>Choose a new password</h2>
+        <p>Pick something you have not used here before. At least 6 characters.</p>
+        <label class="field">
+          <span>New password</span>
+          <input
+            name="password"
+            type="password"
+            required
+            minlength="6"
+            autocomplete="new-password"
+          />
+        </label>
+        <label class="field">
+          <span>Type it again</span>
+          <input
+            name="confirm"
+            type="password"
+            required
+            minlength="6"
+            autocomplete="new-password"
+          />
+        </label>
+        <p class="msg" id="reset-msg"></p>
+        <div class="actions">
+          <button class="btn btn--primary" value="save">Change my password</button>
+          <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="delete-dialog">
+      <form method="dialog" class="sheet" id="delete-form">
+        <h2>Delete your account</h2>
+        <p>
+          This removes your account, your listings, your offers, your messages
+          and your reviews. It cannot be undone and nobody can restore it for
+          you.
+        </p>
+        <label class="field">
+          <span>Confirm your password</span>
+          <input
+            name="password"
+            type="password"
+            required
+            autocomplete="current-password"
+          />
+        </label>
+        <p class="msg" id="delete-msg"></p>
+        <div class="actions">
+          <button class="btn btn--danger" value="delete">Delete everything</button>
+          <button class="btn" value="cancel" formnovalidate>Keep my account</button>
         </div>
       </form>
     </dialog>
