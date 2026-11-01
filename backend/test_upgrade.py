@@ -84,8 +84,20 @@ def columns(table):
 print("\nUPGRADING A DATABASE FROM THE PREVIOUS RELEASE")
 print("=" * 62)
 
+check("users gained age", "age" in columns("users"))
 check("users gained adult_confirmed_at", "adult_confirmed_at" in columns("users"))
 check("sessions gained expires_at", "expires_at" in columns("sessions"))
+
+# Accounts made before the age field have no age, and nothing invents one for
+# them. A default of 0 would read as a newborn; blank reads as not asked.
+check("an account from before the age field has no age, not a zero",
+      main.connect().execute(
+          "SELECT age FROM users WHERE email='old@example.com'"
+      ).fetchone()["age"], None)
+check("and the owner listing does not call them a minor",
+      main.admin_users(None, None, main.connect(),
+                       {"email": "x@example.com", "id": 0})["users"][0]["minor"],
+      False)
 check("password_resets was created",
       main.connect().execute(
           "SELECT COUNT(*) c FROM password_resets").fetchone()["c"], 0)

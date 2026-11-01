@@ -82,6 +82,19 @@ def raises(label, status, fn, *a, **kw):
     return None
 
 
+def _schema_rejects(**kw):
+    """True when RegisterIn itself refuses these values.
+
+    Ages outside 0..120 never reach the endpoint: pydantic stops them at the
+    schema. That is still a refusal, just an earlier one.
+    """
+    try:
+        main.RegisterIn(**kw)
+    except Exception:
+        return True
+    return False
+
+
 def db():
     return main.connect()
 
@@ -99,36 +112,87 @@ def reset_limits():
     main._rate_hits.clear()
 
 
-# ---------------------------------------------------------------- age gate
-banner("1. AGE GATE")
+# -------------------------------------------------------------- age at signup
+banner("1. AGE AT SIGNUP")
+
+check("the floor is 14", main.MIN_SIGNUP_AGE, 14)
 
 bg = BackgroundTasks()
-raises("register without is_adult", 400, main.register,
-       main.RegisterIn(name="Minor", email="minor@example.com",
+raises("register with no age at all", 400, main.register,
+       main.RegisterIn(name="Nameless", email="noage@example.com",
                        password="secret123", role="student", area="Ayodhya"),
        bg, req(), db())
 
 bg = BackgroundTasks()
+raises("register one year under the floor", 400, main.register,
+       main.RegisterIn(name="Too Young", email="young@example.com",
+                       password="secret123", role="student", age=13),
+       bg, req(), db())
+
+bg = BackgroundTasks()
+raises("register at zero", 400, main.register,
+       main.RegisterIn(name="Zero", email="zero@example.com",
+                       password="secret123", role="student", age=0),
+       bg, req(), db())
+
+check("an age above the ceiling is refused by the schema",
+      _schema_rejects(name="Old", email="old@example.com",
+                      password="secret123", role="student", age=200))
+check("a negative age is refused by the schema",
+      _schema_rejects(name="Neg", email="neg@example.com",
+                      password="secret123", role="student", age=-1))
+
+check("nothing was created by any of those",
+      db().execute("SELECT COUNT(*) c FROM users").fetchone()["c"], 0)
+
+# Exactly on the floor must be allowed -- an off-by-one here is the whole
+# difference between admitting 14-year-olds and not.
+bg = BackgroundTasks()
+out = main.register(
+    main.RegisterIn(name="Exactly Fourteen", email="fourteen@example.com",
+                    password="secret123", role="student", age=14),
+    bg, req(), db())
+check("register at exactly 14 succeeds", out["ok"])
+MINOR_ID = out["id"]
+
+bg = BackgroundTasks()
 out = main.register(
     main.RegisterIn(name="Asha", email="asha@example.com", password="secret123",
-                    role="student", area="Ayodhya", is_adult=True),
+                    role="student", area="Ayodhya", age=19),
     bg, req(), db())
-check("register with is_adult succeeds", out["ok"])
+check("register as an adult succeeds", out["ok"])
 STUDENT_ID = out["id"]
 
-row = db().execute("SELECT adult_confirmed_at FROM users WHERE id=?",
+row = db().execute("SELECT age FROM users WHERE id=?",
                    (STUDENT_ID,)).fetchone()
-check("adult_confirmed_at is recorded", row["adult_confirmed_at"] is not None)
+check("the age is stored as given", row["age"], 19)
 check("welcome email was queued", len(bg.tasks), 1)
 
 bg = BackgroundTasks()
 out = main.register(
     main.RegisterIn(name="Ravi", email="ravi@example.com", password="secret123",
                     role="shop", shop_name="Ravi Stationers", area="Ayodhya",
-                    phone="9876543210", is_adult=True),
+                    phone="9876543210", age=41),
     bg, req(), db())
 SHOP_ID = out["id"]
 check("shop registers", out["ok"])
+
+# The owner has to be able to tell which accounts belong to children.
+listing = main.admin_users(None, None, db(),
+                           {"email": "owner@example.com", "id": 0})
+by_id = dict((u["id"], u) for u in listing["users"])
+check("a 14-year-old is flagged as a minor", by_id[MINOR_ID]["minor"])
+check("and their age is shown", by_id[MINOR_ID]["age"], 14)
+check("a 19-year-old is not flagged", by_id[STUDENT_ID]["minor"], False)
+
+# Correcting a typo is allowed; editing under the floor is not.
+me_minor = db().execute("SELECT * FROM users WHERE id=?", (MINOR_ID,)).fetchone()
+raises("editing your age below the floor", 400, main.update_me,
+       main.ProfileIn(age=12), db(), dict(me_minor))
+updated = main.update_me(main.ProfileIn(age=15), db(), dict(me_minor))
+check("correcting an age upward works", updated["age"], 15)
+check("and /api/me reports it", main.me(dict(db().execute(
+    "SELECT * FROM users WHERE id=?", (MINOR_ID,)).fetchone()))["age"], 15)
 
 # ------------------------------------------------------------ token expiry
 banner("2. TOKEN EXPIRY")
@@ -374,7 +438,7 @@ raises("the token after deletion", 401,
 bg = BackgroundTasks()
 main.register(main.RegisterIn(name="Owner", email="owner@example.com",
                               password="secret123", role="student",
-                              is_adult=True), bg, req(), db())
+                              age=34), bg, req(), db())
 reset_limits()
 otok = main.login(main.LoginIn(email="owner@example.com",
                                password="secret123"), req(), db())["token"]

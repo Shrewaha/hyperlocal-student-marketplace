@@ -6,6 +6,23 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Signup asks for an age, not whether you are 18.** A number says which
+  accounts belong to under-18s; a yes/no tick says nothing useful. The
+  minimum is 14, set by `MIN_SIGNUP_AGE`.
+- The owner's account list shows each age and marks accounts under 18, so
+  "is this a child" is a question that can be answered at a glance.
+- Age is editable from the profile screen, because a number typed once into
+  a signup form is a number typed wrong sometimes, and the floor still
+  applies to the edit.
+
+  **Worth knowing:** the DPDP Act treats anyone under 18 as a child and
+  expects verifiable parental consent before their data is held. This
+  marketplace collects none, so accounts between 14 and 17 are held without
+  it. That was a deliberate decision. Raising the floor to 18 is one
+  environment variable on a running service.
+
 ### Added
 
 - **Password reset.** "Forgot your password?" on the sign-in form sends a
@@ -22,10 +39,7 @@ Notable changes to this project. Format follows
   its listings, offers, messages, reviews and mail log. Withdrawing consent
   has to actually remove something, which the DPDP Act will require from
   13 May 2027.
-- **An 18-or-over confirmation at signup.** The DPDP Act treats under-18s as
-  children and wants verifiable parental consent, which a campus marketplace
-  cannot collect. First-year students are often 17, so the question is asked
-  rather than assumed.
+- **An age is asked for at signup** and stored, with a minimum of 14.
 - **Rate limiting on the auth endpoints**, per address and per account. A
   login endpoint that answers as fast as the network allows gives up a weak
   password in minutes.
